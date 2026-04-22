@@ -9,7 +9,25 @@ const isVercel = process.env.VERCEL === '1'
 
 interface Message {
     role: string
-    content: string
+    content: string | MessageContent[]
+    usage?: UsagePayload
+    info?: UsagePayload & {
+        usage?: UsagePayload
+    }
+}
+
+interface MessageContent {
+    type?: string
+    text?: string
+}
+
+interface UsagePayload {
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    input_tokens?: number
+    output_tokens?: number
+    [key: string]: unknown
 }
 
 interface ModelPrice {
@@ -21,6 +39,92 @@ interface ModelPrice {
 }
 
 type DbClient = ReturnType<typeof createClient> | Pool | PoolClient
+
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === 'number' && Number.isFinite(value)
+}
+
+function getUsagePayload(message: Message): UsagePayload | null {
+    if (message.usage && typeof message.usage === 'object') {
+        return message.usage
+    }
+
+    if (message.info?.usage && typeof message.info.usage === 'object') {
+        return message.info.usage
+    }
+
+    if (message.info && typeof message.info === 'object') {
+        return message.info
+    }
+
+    return null
+}
+
+function getTokenCountsFromUsage(
+    usage: UsagePayload
+): { inputTokens: number; outputTokens: number } | null {
+    const inputTokens = isFiniteNumber(usage.prompt_tokens)
+        ? usage.prompt_tokens
+        : isFiniteNumber(usage.input_tokens)
+          ? usage.input_tokens
+          : undefined
+
+    const outputTokens = isFiniteNumber(usage.completion_tokens)
+        ? usage.completion_tokens
+        : isFiniteNumber(usage.output_tokens)
+          ? usage.output_tokens
+          : undefined
+
+    if (
+        typeof inputTokens === 'number' &&
+        typeof outputTokens === 'number'
+    ) {
+        return { inputTokens, outputTokens }
+    }
+
+    const totalTokens = isFiniteNumber(usage.total_tokens)
+        ? usage.total_tokens
+        : undefined
+
+    if (typeof inputTokens === 'number' && typeof totalTokens === 'number') {
+        return {
+            inputTokens,
+            outputTokens: Math.max(totalTokens - inputTokens, 0),
+        }
+    }
+
+    if (typeof outputTokens === 'number' && typeof totalTokens === 'number') {
+        return {
+            inputTokens: Math.max(totalTokens - outputTokens, 0),
+            outputTokens,
+        }
+    }
+
+    return null
+}
+
+function getMessageTextContent(content: Message['content']): string {
+    if (typeof content === 'string') {
+        return content
+    }
+
+    if (!Array.isArray(content)) {
+        return ''
+    }
+
+    return content
+        .map((item) =>
+            item?.type === 'text' && typeof item.text === 'string'
+                ? item.text
+                : ''
+        )
+        .filter(Boolean)
+        .join('\n')
+}
+
+function estimateMessageTokens(message: Message): number {
+    return encode(getMessageTextContent(message.content)).length
+}
 
 async function getModelPrice(modelId: string): Promise<ModelPrice | null> {
     const result = await query(
@@ -86,17 +190,17 @@ export async function POST(req: Request) {
 
         let inputTokens: number
         let outputTokens: number
-        if (
-            lastMessage.usage &&
-            lastMessage.usage.prompt_tokens &&
-            lastMessage.usage.completion_tokens
-        ) {
-            inputTokens = lastMessage.usage.prompt_tokens
-            outputTokens = lastMessage.usage.completion_tokens
+        const usage = getUsagePayload(lastMessage)
+        const usageTokenCounts = usage ? getTokenCountsFromUsage(usage) : null
+
+        if (usageTokenCounts) {
+            inputTokens = usageTokenCounts.inputTokens
+            outputTokens = usageTokenCounts.outputTokens
         } else {
-            outputTokens = encode(lastMessage.content).length
+            outputTokens = estimateMessageTokens(lastMessage)
             const totalTokens = data.body.messages.reduce(
-                (sum: number, msg: Message) => sum + encode(msg.content).length,
+                (sum: number, msg: Message) =>
+                    sum + estimateMessageTokens(msg),
                 0
             )
             inputTokens = totalTokens - outputTokens
