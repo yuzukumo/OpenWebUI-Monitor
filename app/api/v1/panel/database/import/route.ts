@@ -1,6 +1,8 @@
-import { query } from '@/lib/db/client'
+import { ensureTablesExist, query, withTransaction } from '@/lib/db/client'
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
     const authError = verifyApiToken(req)
@@ -9,31 +11,47 @@ export async function POST(req: Request) {
     }
 
     try {
+        await ensureTablesExist()
+
         const data = await req.json()
 
         if (!data.version || !data.data) {
             throw new Error('Invalid import data format')
         }
 
-        try {
-            await query('BEGIN')
-
-            await query('TRUNCATE TABLE user_usage_records CASCADE')
-            await query('TRUNCATE TABLE model_prices CASCADE')
-            await query('TRUNCATE TABLE users CASCADE')
+        await withTransaction(async (client) => {
+            await query('TRUNCATE TABLE user_usage_records CASCADE', [], client)
+            await query('TRUNCATE TABLE model_prices CASCADE', [], client)
+            await query('TRUNCATE TABLE users CASCADE', [], client)
 
             if (data.data.users?.length) {
                 for (const user of data.data.users) {
                     await query(
-                        `INSERT INTO users (id, email, name, role, balance)
-             VALUES ($1, $2, $3, $4, $5)`,
+                        `INSERT INTO users (
+              id, email, name, role, balance, used_balance, created_at, deleted, exists_in_openwebui
+            ) VALUES (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              COALESCE($6, 0),
+              COALESCE($7, CURRENT_TIMESTAMP),
+              COALESCE($8, FALSE),
+              COALESCE($9, TRUE)
+            )`,
                         [
                             user.id,
                             user.email,
                             user.name,
                             user.role,
                             user.balance,
-                        ]
+                            user.used_balance ?? 0,
+                            user.created_at ?? null,
+                            user.deleted ?? false,
+                            user.exists_in_openwebui ?? true,
+                        ],
+                        client
                     )
                 }
             }
@@ -41,14 +59,19 @@ export async function POST(req: Request) {
             if (data.data.model_prices?.length) {
                 for (const price of data.data.model_prices) {
                     await query(
-                        `INSERT INTO model_prices (id, name, input_price, output_price)
-             VALUES ($1, $2, $3, $4)`,
+                        `INSERT INTO model_prices (
+              id, name, base_model_id, input_price, output_price, per_msg_price, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_TIMESTAMP))`,
                         [
                             price.id,
                             price.name,
+                            price.base_model_id ?? null,
                             price.input_price,
                             price.output_price,
-                        ]
+                            price.per_msg_price ?? -1,
+                            price.updated_at ?? null,
+                        ],
+                        client
                     )
                 }
             }
@@ -69,21 +92,17 @@ export async function POST(req: Request) {
                             record.output_tokens,
                             record.cost,
                             record.balance_after,
-                        ]
+                        ],
+                        client
                     )
                 }
             }
+        })
 
-            await query('COMMIT')
-
-            return NextResponse.json({
-                success: true,
-                message: 'Data import successful',
-            })
-        } catch (error) {
-            await query('ROLLBACK')
-            throw error
-        }
+        return NextResponse.json({
+            success: true,
+            message: 'Data import successful',
+        })
     } catch (error) {
         console.error('Fail to import database:', error)
         return NextResponse.json(

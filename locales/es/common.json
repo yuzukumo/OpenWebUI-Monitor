@@ -143,9 +143,12 @@
 
     "users": {
         "title": "Gestión de Usuarios",
-        "description": "Gestione cuentas de usuario y saldos. Puede ver detalles de usuario, ajustar saldos o bloquear usuarios.",
+        "description": "Gestione todos los usuarios de OpenWebUI, su saldo usado y su saldo restante. Puede ver detalles, ajustar el saldo restante o reiniciar el saldo usado.",
         "userInfo": "Información de Usuario",
         "balance": "Saldo",
+        "usedBalance": "Saldo Usado",
+        "remainingBalance": "Saldo Restante",
+        "resetUsedBalance": "Reiniciar Usado",
         "id": "ID",
         "name": "Nombre",
         "email": "Correo Electrónico",
@@ -156,6 +159,10 @@
             "updateBalance": {
                 "success": "Saldo actualizado exitosamente",
                 "error": "Error al actualizar saldo"
+            },
+            "resetUsedBalance": {
+                "success": "Saldo usado reiniciado exitosamente",
+                "error": "Error al reiniciar el saldo usado"
             },
             "fetchUsersError": "Error al obtener lista de usuarios",
             "invalidNumber": "Por favor ingrese un número válido",

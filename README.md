@@ -38,22 +38,34 @@ sudo docker compose up -d
 
 ### Required
 
-| Variable Name     | Description                                                           | Example                    |
-| ----------------- | --------------------------------------------------------------------- | -------------------------- |
-| OPENWEBUI_DOMAIN  | OpenWebUI domain                                                      | `https://chat.example.com` |
-| OPENWEBUI_API_KEY | OpenWebUI API Key, found in `Personal Settings -> Account -> API Key` | `sk-xxxxxxxxxxxxxxxx`      |
-| API_KEY           | For API request verification (must be less than 56 characters)        | `your-api-key-here`        |
-| ACCESS_TOKEN      | For page access verification                                          | `your-access-token-here`   |
+| Variable Name     | Description                                                                       | Example                    |
+| ----------------- | --------------------------------------------------------------------------------- | -------------------------- |
+| OPENWEBUI_DOMAIN  | OpenWebUI domain                                                                  | `https://chat.example.com` |
+| OPENWEBUI_API_KEY | OpenWebUI admin API key or admin JWT token, used for model fetching and user sync | `sk-xxxxxxxxxxxxxxxx`      |
+| API_KEY           | For API request verification (must be less than 56 characters)                    | `your-api-key-here`        |
+| ACCESS_TOKEN      | For page access verification                                                      | `your-access-token-here`   |
 
 ### Optional
 
-| Variable Name               | Description                                                                                                                                 | Default Value |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| DEFAULT_MODEL_INPUT_PRICE   | Default model input price, in USD per million tokens                                                                                        | `60`          |
-| DEFAULT_MODEL_OUTPUT_PRICE  | Default model output price, in USD per million tokens                                                                                       | `60`          |
-| DEFAULT_MODEL_PER_MSG_PRICE | Default model price for each message, in USD                                                                                                | `-1`          |
-| INIT_BALANCE                | Initial user balance                                                                                                                        | `0`           |
-| COST_ON_INLET               | Pre-deduction amount on inlet. Can be a fixed number for all models (e.g. `0.1`), or model-specific format (e.g. `gpt-4:0.32,gpt-3.5:0.01`) | `0`           |
+| Variable Name                    | Description                                                                                                                                 | Default Value |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| DEFAULT_MODEL_INPUT_PRICE        | Default model input price, in USD per million tokens                                                                                        | `60`          |
+| DEFAULT_MODEL_OUTPUT_PRICE       | Default model output price, in USD per million tokens                                                                                       | `60`          |
+| DEFAULT_MODEL_PER_MSG_PRICE      | Default model price for each message, in USD                                                                                                | `-1`          |
+| INIT_BALANCE                     | Initial user balance                                                                                                                        | `0`           |
+| COST_ON_INLET                    | Pre-deduction amount on inlet. Can be a fixed number for all models (e.g. `0.1`), or model-specific format (e.g. `gpt-4:0.32,gpt-3.5:0.01`) | `0`           |
+| OPENWEBUI_USERS_SYNC_INTERVAL_MS | Interval in milliseconds for refreshing the authoritative user list from OpenWebUI on the user-management API                               | `30000`       |
+
+## Testing
+
+This repository includes a reproducible end-to-end test that boots PostgreSQL, the official OpenWebUI slim image, a mock OpenAI-compatible backend, and then validates the monitor with Chromium screenshots.
+
+```bash
+pnpm e2e:install
+pnpm e2e:owu
+```
+
+Artifacts are written to `artifacts/e2e/`, including logs, screenshots, and `summary.json`.
 
 ## Function Variable Configuration
 
@@ -79,7 +91,7 @@ Fill in your deployed OpenWebUI Monitor backend domain or IP address accessible 
 
 ### 3. Why can't I see users in the user management page?
 
-OpenWebUI Monitor will only start tracking a user’s information after the user makes their first chat request.
+The monitor now refreshes the current OpenWebUI user list from `GET /api/v1/users/all` and matches users by stable OpenWebUI `id`, so renames update in place and users deleted in OpenWebUI disappear from the monitor automatically. If users still do not appear, check that `OPENWEBUI_API_KEY` is an admin credential that can access the OpenWebUI users API.
 
 <h2>Gallery</h2>
 

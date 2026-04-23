@@ -9,7 +9,6 @@ import {
     Copy,
     LogOut,
     Database,
-    Github,
     Menu,
     Globe,
     X,
@@ -30,7 +29,7 @@ import { Button } from '@/components/ui/button'
 import { createRoot } from 'react-dom/client'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import { FiDatabase, FiUsers, FiBarChart2 } from 'react-icons/fi'
+import { FiDatabase, FiUsers, FiBarChart2, FiGithub } from 'react-icons/fi'
 
 export default function Header() {
     const { t, i18n } = useTranslation('common')
@@ -40,6 +39,7 @@ export default function Header() {
     const [isBackupModalOpen, setIsBackupModalOpen] = useState(false)
     const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
     const [accessToken, setAccessToken] = useState<string | null>(null)
+    const [apiKey, setApiKey] = useState(t('common.loading'))
 
     const handleLanguageChange = async (newLang: string) => {
         await i18n.changeLanguage(newLang)
@@ -47,6 +47,44 @@ export default function Header() {
     }
 
     const isTokenPage = pathname === '/token'
+
+    useEffect(() => {
+        if (isTokenPage) {
+            return
+        }
+
+        const token = localStorage.getItem('access_token')
+        setAccessToken(token)
+
+        if (!token) {
+            router.push('/token')
+            return
+        }
+
+        fetch('/api/v1/config', {
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        })
+            .then((res) => {
+                if (!res.ok) {
+                    localStorage.removeItem('access_token')
+                    router.push('/token')
+                    return
+                }
+                return res.json()
+            })
+            .then((data) => {
+                if (data) {
+                    setApiKey(data.apiKey)
+                }
+            })
+            .catch(() => {
+                setApiKey(t('common.error'))
+                localStorage.removeItem('access_token')
+                router.push('/token')
+            })
+    }, [isTokenPage, router, t])
 
     if (isTokenPage) {
         return (
@@ -99,42 +137,6 @@ export default function Header() {
             </header>
         )
     }
-
-    const [apiKey, setApiKey] = useState(t('common.loading'))
-
-    useEffect(() => {
-        const token = localStorage.getItem('access_token')
-        setAccessToken(token)
-
-        if (!token) {
-            router.push('/token')
-            return
-        }
-
-        fetch('/api/v1/config', {
-            headers: {
-                Authorization: `Bearer ${token}`,
-            },
-        })
-            .then((res) => {
-                if (!res.ok) {
-                    localStorage.removeItem('access_token')
-                    router.push('/token')
-                    return
-                }
-                return res.json()
-            })
-            .then((data) => {
-                if (data) {
-                    setApiKey(data.apiKey)
-                }
-            })
-            .catch(() => {
-                setApiKey(t('common.error'))
-                localStorage.removeItem('access_token')
-                router.push('/token')
-            })
-    }, [router, t])
 
     const handleCopyApiKey = () => {
         const token = localStorage.getItem('access_token')
@@ -205,7 +207,7 @@ export default function Header() {
                                     <DialogHeader>
                                         <div className="flex items-center gap-2">
                                             <div className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-primary/10">
-                                                <Github className="w-4 h-4 text-gray-500" />
+                                                <FiGithub className="w-4 h-4 text-gray-500" />
                                             </div>
                                             <DialogTitle className="text-base sm:text-lg">
                                                 {t('header.update.newVersion')}
@@ -303,7 +305,7 @@ export default function Header() {
             color: 'from-rose-500/20 to-pink-500/20',
         },
         {
-            icon: <Github className="w-5 h-5" />,
+            icon: <FiGithub className="w-5 h-5" />,
             label: t('header.menu.checkUpdate'),
             onClick: checkUpdate,
             color: 'from-emerald-500/20 to-teal-500/20',
@@ -336,7 +338,7 @@ export default function Header() {
             color: 'from-rose-500/20 to-pink-500/20',
         },
         {
-            icon: <Github className="w-5 h-5" />,
+            icon: <FiGithub className="w-5 h-5" />,
             label: t('header.menu.checkUpdate'),
             onClick: checkUpdate,
             color: 'from-emerald-500/20 to-teal-500/20',

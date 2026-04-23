@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { ensureTablesExist, getOrCreateModelPrices } from '@/lib/db/client'
 import { verifyApiToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
 interface ModelInfo {
     id: string
     base_model_id: string

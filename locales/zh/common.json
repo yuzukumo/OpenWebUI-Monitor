@@ -142,9 +142,12 @@
 
     "users": {
         "title": "用户管理",
-        "description": "管理所有用户的账户信息和余额。您可以查看用户详情、调整余额或将用户加入黑名单。",
+        "description": "管理所有 OpenWebUI 用户的账户信息、已用余额和剩余余额。您可以查看用户详情、调整剩余余额或将已用余额清零。",
         "userInfo": "用户信息",
         "balance": "余额",
+        "usedBalance": "已用余额",
+        "remainingBalance": "剩余余额",
+        "resetUsedBalance": "清零已用",
         "id": "ID",
         "name": "姓名",
         "email": "邮箱",
@@ -155,6 +158,10 @@
             "updateBalance": {
                 "success": "余额更新成功",
                 "error": "更新余额失败"
+            },
+            "resetUsedBalance": {
+                "success": "已用余额已清零",
+                "error": "清零已用余额失败"
             },
             "fetchUsersError": "获取用户列表失败",
             "invalidNumber": "请输入有效的数字",

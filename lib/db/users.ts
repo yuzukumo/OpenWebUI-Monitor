@@ -1,4 +1,4 @@
-import { query } from './client'
+import { query, withTransaction } from './client'
 
 export interface User {
     id: string
@@ -6,6 +6,166 @@ export interface User {
     name: string
     role: string
     balance: number
+    used_balance?: number
+    deleted?: boolean
+    exists_in_openwebui?: boolean
+}
+
+interface OpenWebUIUser {
+    id: string
+    email: string
+    name: string
+    role: string
+}
+
+interface SyncUsersOptions {
+    force?: boolean
+}
+
+interface SyncUsersResult {
+    synced: boolean
+    skipped: boolean
+    userCount: number
+    reason?: string
+}
+
+let lastUsersSyncAt = 0
+let usersSyncPromise: Promise<SyncUsersResult> | null = null
+
+function getUsersSyncIntervalMs() {
+    const parsedValue = parseInt(
+        process.env.OPENWEBUI_USERS_SYNC_INTERVAL_MS || '30000',
+        10
+    )
+
+    return Number.isFinite(parsedValue) && parsedValue >= 0
+        ? parsedValue
+        : 30000
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null
+}
+
+function normalizeOpenWebUIUser(user: unknown): OpenWebUIUser | null {
+    if (!isRecord(user)) {
+        return null
+    }
+
+    const id = typeof user.id === 'string' ? user.id.trim() : ''
+    const email = typeof user.email === 'string' ? user.email.trim() : ''
+    const rawName = typeof user.name === 'string' ? user.name.trim() : ''
+    const role =
+        typeof user.role === 'string' && user.role.trim()
+            ? user.role.trim()
+            : 'user'
+
+    if (!id || !email) {
+        return null
+    }
+
+    return {
+        id,
+        email,
+        name: rawName || email || id,
+        role,
+    }
+}
+
+function normalizeOpenWebUIUsers(payload: unknown): OpenWebUIUser[] {
+    const candidateUsers = Array.isArray(payload)
+        ? payload
+        : isRecord(payload) && Array.isArray(payload.users)
+          ? payload.users
+          : isRecord(payload) && Array.isArray(payload.data)
+            ? payload.data
+            : null
+
+    if (!candidateUsers) {
+        throw new Error('Unexpected OpenWebUI users response structure')
+    }
+
+    return candidateUsers
+        .map((user) => normalizeOpenWebUIUser(user))
+        .filter((user): user is OpenWebUIUser => user !== null)
+}
+
+async function ensureUserColumnsExist() {
+    let didAddUsedBalanceColumn = false
+    const requiredColumns = [
+        {
+            name: 'created_at',
+            sql: `
+        ALTER TABLE users 
+          ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+      `,
+        },
+        {
+            name: 'deleted',
+            sql: `
+        ALTER TABLE users 
+          ADD COLUMN deleted BOOLEAN DEFAULT FALSE;
+      `,
+        },
+        {
+            name: 'exists_in_openwebui',
+            sql: `
+        ALTER TABLE users 
+          ADD COLUMN exists_in_openwebui BOOLEAN DEFAULT TRUE;
+      `,
+        },
+        {
+            name: 'used_balance',
+            sql: `
+        ALTER TABLE users
+          ADD COLUMN used_balance DECIMAL(16,4) DEFAULT 0;
+      `,
+        },
+    ]
+
+    for (const column of requiredColumns) {
+        const columnExists = await query(
+            `
+        SELECT EXISTS (
+          SELECT FROM information_schema.columns 
+          WHERE table_name = 'users' AND column_name = $1
+        );
+      `,
+            [column.name]
+        )
+
+        if (!columnExists.rows[0].exists) {
+            await query(column.sql)
+            if (column.name === 'used_balance') {
+                didAddUsedBalanceColumn = true
+            }
+        }
+    }
+
+    if (didAddUsedBalanceColumn) {
+        const usageTableExists = await query(`
+        SELECT EXISTS (
+          SELECT FROM information_schema.tables
+          WHERE table_name = 'user_usage_records'
+        );
+      `)
+
+        if (usageTableExists.rows[0].exists) {
+            await query(`
+          WITH usage_totals AS (
+            SELECT
+              user_id,
+              CAST(COALESCE(SUM(cost), 0) AS DECIMAL(16,4)) AS total_used_balance
+            FROM user_usage_records
+            GROUP BY user_id
+          )
+          UPDATE users AS u
+             SET used_balance = usage_totals.total_used_balance
+            FROM usage_totals
+           WHERE u.id = usage_totals.user_id;
+        `)
+        }
+    }
 }
 
 export async function ensureUserTableExists() {
@@ -22,33 +182,12 @@ export async function ensureUserTableExists() {
         ALTER COLUMN balance TYPE DECIMAL(16,4);
     `)
 
-        const columnExists = await query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.columns 
-        WHERE table_name = 'users' AND column_name = 'created_at'
-      );
-    `)
+        await query(`
+      ALTER TABLE users
+        ALTER COLUMN used_balance TYPE DECIMAL(16,4);
+    `).catch(() => null)
 
-        if (!columnExists.rows[0].exists) {
-            await query(`
-        ALTER TABLE users 
-          ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
-      `)
-        }
-
-        const deletedColumnExists = await query(`
-      SELECT EXISTS (
-        SELECT FROM information_schema.columns 
-        WHERE table_name = 'users' AND column_name = 'deleted'
-      );
-    `)
-
-        if (!deletedColumnExists.rows[0].exists) {
-            await query(`
-        ALTER TABLE users 
-          ADD COLUMN deleted BOOLEAN DEFAULT FALSE;
-      `)
-        }
+        await ensureUserColumnsExist()
     } else {
         await query(`
       CREATE TABLE users (
@@ -57,8 +196,10 @@ export async function ensureUserTableExists() {
         name TEXT NOT NULL,
         role TEXT NOT NULL,
         balance DECIMAL(16,4) NOT NULL,
+        used_balance DECIMAL(16,4) NOT NULL DEFAULT 0,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        deleted BOOLEAN DEFAULT FALSE
+        deleted BOOLEAN DEFAULT FALSE,
+        exists_in_openwebui BOOLEAN DEFAULT TRUE
       );
     `)
 
@@ -68,13 +209,26 @@ export async function ensureUserTableExists() {
     }
 }
 
-export async function getOrCreateUser(userData: any) {
+export async function getOrCreateUser(userData: User) {
+    await ensureUserTableExists()
+
     const result = await query(
         `
-    INSERT INTO users (id, email, name, role, balance)
-      VALUES ($1, $2, $3, $4, $5)
+    INSERT INTO users (
+      id,
+      email,
+      name,
+      role,
+      balance,
+      used_balance,
+      exists_in_openwebui
+    )
+      VALUES ($1, $2, $3, $4, $5, 0, TRUE)
       ON CONFLICT (id) DO UPDATE
-      SET email = $2, name = $3
+      SET email = EXCLUDED.email,
+          name = EXCLUDED.name,
+          role = EXCLUDED.role,
+          exists_in_openwebui = TRUE
       RETURNING *`,
         [
             userData.id,
@@ -86,6 +240,116 @@ export async function getOrCreateUser(userData: any) {
     )
 
     return result.rows[0]
+}
+
+export async function syncUsersFromOpenWebUI({
+    force = false,
+}: SyncUsersOptions = {}): Promise<SyncUsersResult> {
+    await ensureUserTableExists()
+
+    const openWebUIDomain = process.env.OPENWEBUI_DOMAIN?.trim()
+    const openWebUIApiKey = process.env.OPENWEBUI_API_KEY?.trim()
+
+    if (!openWebUIDomain || !openWebUIApiKey) {
+        return {
+            synced: false,
+            skipped: true,
+            userCount: 0,
+            reason: 'missing_config',
+        }
+    }
+
+    const syncIntervalMs = getUsersSyncIntervalMs()
+    if (
+        !force &&
+        syncIntervalMs > 0 &&
+        Date.now() - lastUsersSyncAt < syncIntervalMs
+    ) {
+        return {
+            synced: false,
+            skipped: true,
+            userCount: 0,
+            reason: 'cooldown',
+        }
+    }
+
+    if (usersSyncPromise) {
+        return usersSyncPromise
+    }
+
+    usersSyncPromise = (async () => {
+        const response = await fetch(
+            `${openWebUIDomain.replace(/\/+$/, '')}/api/v1/users/all`,
+            {
+                headers: {
+                    Authorization: `Bearer ${openWebUIApiKey}`,
+                    Accept: 'application/json',
+                },
+                cache: 'no-store',
+            }
+        )
+
+        if (!response.ok) {
+            const responseText = await response.text()
+            throw new Error(
+                `Failed to fetch OpenWebUI users: ${response.status} ${response.statusText} ${responseText}`
+            )
+        }
+
+        const remoteUsers = normalizeOpenWebUIUsers(await response.json())
+        const remoteUserIds = remoteUsers.map((user) => user.id)
+        const initBalance = process.env.INIT_BALANCE || '0'
+
+        await withTransaction(async (client) => {
+            for (const user of remoteUsers) {
+                await query(
+                    `
+              INSERT INTO users (
+                id,
+                email,
+                name,
+                role,
+                balance,
+                used_balance,
+                exists_in_openwebui
+              )
+              VALUES ($1, $2, $3, $4, $5, 0, TRUE)
+              ON CONFLICT (id) DO UPDATE
+              SET email = EXCLUDED.email,
+                  name = EXCLUDED.name,
+                  role = EXCLUDED.role,
+                  exists_in_openwebui = TRUE
+            `,
+                    [user.id, user.email, user.name, user.role, initBalance],
+                    client
+                )
+            }
+
+            await query(
+                `
+            UPDATE users
+               SET exists_in_openwebui = FALSE
+             WHERE NOT (id = ANY($1::text[]))
+          `,
+                [remoteUserIds],
+                client
+            )
+        })
+
+        lastUsersSyncAt = Date.now()
+
+        return {
+            synced: true,
+            skipped: false,
+            userCount: remoteUsers.length,
+        }
+    })()
+
+    try {
+        return await usersSyncPromise
+    } finally {
+        usersSyncPromise = null
+    }
 }
 
 export async function updateUserBalance(
@@ -117,24 +381,28 @@ export async function updateUserBalance(
     return Number(result.rows[0].balance)
 }
 
-async function ensureDeletedColumnExists() {
-    const deletedColumnExists = await query(`
-    SELECT EXISTS (
-      SELECT FROM information_schema.columns 
-      WHERE table_name = 'users' AND column_name = 'deleted'
-    );
-  `)
+export async function resetUserUsedBalance(userId: string) {
+    await ensureUserTableExists()
 
-    if (!deletedColumnExists.rows[0].exists) {
-        await query(`
-      ALTER TABLE users 
-        ADD COLUMN deleted BOOLEAN DEFAULT FALSE;
-    `)
+    const result = await query(
+        `
+    UPDATE users
+       SET used_balance = 0
+     WHERE id = $1
+     RETURNING id, email, name, role, balance, used_balance
+  `,
+        [userId]
+    )
+
+    if (result.rows.length === 0) {
+        throw new Error('User not found')
     }
+
+    return result.rows[0]
 }
 
 export async function deleteUser(userId: string) {
-    await ensureDeletedColumnExists()
+    await ensureUserTableExists()
 
     const updateResult = await query(
         `
@@ -153,6 +421,7 @@ interface GetUsersOptions {
     sortField?: string | null
     sortOrder?: string | null
     search?: string | null
+    includeMissingFromOpenWebUI?: boolean
 }
 
 export async function getUsers({
@@ -161,41 +430,65 @@ export async function getUsers({
     sortField = null,
     sortOrder = null,
     search = null,
+    includeMissingFromOpenWebUI = false,
 }: GetUsersOptions = {}) {
-    await ensureDeletedColumnExists()
+    await ensureUserTableExists()
 
     const offset = (page - 1) * pageSize
-
-    let whereClause = 'deleted = FALSE'
+    const conditions = []
     const queryParams: any[] = []
 
-    if (search) {
-        queryParams.push(`%${search}%`, `%${search}%`)
-        whereClause += `
-      AND (
-        name ILIKE $${queryParams.length - 1} OR 
-        email ILIKE $${queryParams.length}
-      )`
+    if (!includeMissingFromOpenWebUI) {
+        conditions.push('COALESCE(exists_in_openwebui, TRUE) = TRUE')
     }
 
+    if (search) {
+        const loweredSearch = search.trim()
+        const nameSearchIndex = queryParams.length + 1
+        const emailSearchIndex = queryParams.length + 2
+
+        queryParams.push(`%${loweredSearch}%`, `%${loweredSearch}%`)
+        conditions.push(
+            `(name ILIKE $${nameSearchIndex} OR email ILIKE $${emailSearchIndex})`
+        )
+    }
+
+    const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
+
     const countResult = await query(
-        `SELECT COUNT(*) FROM users WHERE ${whereClause}`,
-        search ? queryParams : []
+        `SELECT COUNT(*) FROM users ${whereClause}`,
+        queryParams
     )
     const total = parseInt(countResult.rows[0].count)
 
     let orderClause = 'created_at DESC'
     if (search) {
+        const searchStartsWithIndex = queryParams.length + 1
+        const searchContainsNameIndex = queryParams.length + 2
+        const searchContainsEmailIndex = queryParams.length + 3
+
         orderClause = `
       CASE 
-        WHEN name ILIKE $${queryParams.length + 1} THEN 1
-        WHEN name ILIKE $${queryParams.length + 2} THEN 2
-        WHEN email ILIKE $${queryParams.length + 3} THEN 3
+        WHEN name ILIKE $${searchStartsWithIndex} THEN 1
+        WHEN name ILIKE $${searchContainsNameIndex} THEN 2
+        WHEN email ILIKE $${searchContainsEmailIndex} THEN 3
         ELSE 4
       END`
-        queryParams.push(`${search}%`, `%${search}%`, `%${search}%`)
+        queryParams.push(
+            `${search.trim()}%`,
+            `%${search.trim()}%`,
+            `%${search.trim()}%`
+        )
     } else if (sortField && sortOrder) {
-        const allowedFields = ['balance', 'name', 'email', 'role']
+        const allowedFields = [
+            'balance',
+            'used_balance',
+            'name',
+            'email',
+            'role',
+            'created_at',
+        ]
         if (allowedFields.includes(sortField)) {
             orderClause = `${sortField} ${sortOrder === 'ascend' ? 'ASC' : 'DESC'}`
         }
@@ -204,9 +497,9 @@ export async function getUsers({
     queryParams.push(pageSize, offset)
     const result = await query(
         `
-    SELECT id, email, name, role, balance, deleted
+    SELECT id, email, name, role, balance, used_balance, deleted, exists_in_openwebui
       FROM users
-      WHERE ${whereClause}
+      ${whereClause}
       ORDER BY ${orderClause}
       LIMIT $${queryParams.length - 1} OFFSET $${queryParams.length}`,
         queryParams
@@ -218,13 +511,22 @@ export async function getUsers({
     }
 }
 
-export async function getAllUsers(includeDeleted: boolean = false) {
-    const whereClause = includeDeleted
-        ? ''
-        : 'WHERE (deleted = FALSE OR deleted IS NULL)'
+export async function getAllUsers(
+    includeMissingFromOpenWebUI: boolean = false
+) {
+    await ensureUserTableExists()
+
+    const conditions = []
+
+    if (!includeMissingFromOpenWebUI) {
+        conditions.push('COALESCE(exists_in_openwebui, TRUE) = TRUE')
+    }
+
+    const whereClause =
+        conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     const result = await query(`
-    SELECT id, email, name, role, balance, deleted
+    SELECT id, email, name, role, balance, used_balance, deleted, exists_in_openwebui
       FROM users
       ${whereClause}
       ORDER BY created_at DESC

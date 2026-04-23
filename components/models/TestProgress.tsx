@@ -1,5 +1,6 @@
 'use client'
 
+import type { ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Progress } from '@/components/ui/progress'
 import { CheckCircle2, XCircle, Clock } from 'lucide-react'
@@ -52,7 +53,7 @@ export function TestProgress({
         type: 'success' | 'error' | 'pending'
         models: typeof successModels
         count: number
-        icon: JSX.Element
+        icon: ReactNode
         color: string
         label: string
     }) => (

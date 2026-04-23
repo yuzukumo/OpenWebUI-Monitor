@@ -136,6 +136,11 @@ export default function RecordsPage() {
     const fetchRecords = async (params: TableParams) => {
         setLoading(true)
         try {
+            const token = localStorage.getItem('access_token')
+            if (!token) {
+                throw new Error(t('auth.unauthorized'))
+            }
+
             const searchParams = new URLSearchParams()
             searchParams.append(
                 'page',
@@ -175,7 +180,12 @@ export default function RecordsPage() {
             }
 
             const response = await fetch(
-                `/api/v1/panel/records?${searchParams.toString()}`
+                `/api/v1/panel/records?${searchParams.toString()}`,
+                {
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
+                }
             )
             const data = await response.json()
 
@@ -225,7 +235,16 @@ export default function RecordsPage() {
 
     const handleExport = async () => {
         try {
-            const response = await fetch('/api/v1/panel/records/export')
+            const token = localStorage.getItem('access_token')
+            if (!token) {
+                throw new Error(t('auth.unauthorized'))
+            }
+
+            const response = await fetch('/api/v1/panel/records/export', {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                },
+            })
             const blob = await response.blob()
             const url = window.URL.createObjectURL(blob)
             const a = document.createElement('a')

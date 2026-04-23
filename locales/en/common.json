@@ -142,9 +142,12 @@
 
     "users": {
         "title": "User Management",
-        "description": "Manage user accounts and balances. You can view user details, adjust balances, or blacklist users.",
+        "description": "Manage all OpenWebUI users, their used balance, and their remaining balance. You can inspect details, adjust remaining balance, or reset used balance.",
         "userInfo": "User Info",
         "balance": "Balance",
+        "usedBalance": "Used Balance",
+        "remainingBalance": "Remaining Balance",
+        "resetUsedBalance": "Reset Used",
         "id": "ID",
         "name": "Name",
         "email": "Email",
@@ -155,6 +158,10 @@
             "updateBalance": {
                 "success": "Balance updated successfully",
                 "error": "Failed to update balance"
+            },
+            "resetUsedBalance": {
+                "success": "Used balance reset successfully",
+                "error": "Failed to reset used balance"
             },
             "fetchUsersError": "Failed to fetch user list",
             "invalidNumber": "Please enter a valid number",

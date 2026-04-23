@@ -7,6 +7,15 @@ const eslintConfig = defineConfig([
     ...nextVitals,
     ...nextTs,
     prettier,
+    {
+        rules: {
+            '@typescript-eslint/no-explicit-any': 'warn',
+            '@typescript-eslint/no-require-imports': 'warn',
+            'react-hooks/purity': 'warn',
+            'react-hooks/set-state-in-effect': 'warn',
+            'react-hooks/static-components': 'warn',
+        },
+    },
     // Override default ignores of eslint-config-next.
     globalIgnores([
         // Default ignores of eslint-config-next:

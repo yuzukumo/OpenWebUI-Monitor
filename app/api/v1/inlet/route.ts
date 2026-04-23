@@ -3,19 +3,13 @@ import { getOrCreateUser } from '@/lib/db/users'
 import { query } from '@/lib/db/client'
 import { getModelInletCost } from '@/lib/utils/inlet-cost'
 
+export const dynamic = 'force-dynamic'
+
 export async function POST(req: Request) {
     try {
         const data = await req.json()
         const user = await getOrCreateUser(data.user)
         const modelId = data.body?.model
-
-        if (user.deleted) {
-            return NextResponse.json({
-                success: true,
-                balance: -1,
-                message: 'Request successful',
-            })
-        }
 
         const inletCost = getModelInletCost(modelId)
 
@@ -25,9 +19,13 @@ export async function POST(req: Request) {
          SET balance = LEAST(
            balance - CAST($1 AS DECIMAL(16,4)),
            999999.9999
-         )
-         WHERE id = $2 AND NOT deleted
-         RETURNING balance`,
+         ),
+             used_balance = GREATEST(
+               COALESCE(used_balance, 0) + CAST($1 AS DECIMAL(16,4)),
+               0
+             )
+         WHERE id = $2
+         RETURNING balance, used_balance`,
                 [inletCost, user.id]
             )
 
@@ -38,6 +36,7 @@ export async function POST(req: Request) {
             return NextResponse.json({
                 success: true,
                 balance: Number(userResult.rows[0].balance),
+                used_balance: Number(userResult.rows[0].used_balance),
                 inlet_cost: inletCost,
                 message: 'Request successful',
             })
@@ -46,6 +45,7 @@ export async function POST(req: Request) {
         return NextResponse.json({
             success: true,
             balance: Number(user.balance),
+            used_balance: Number(user.used_balance || 0),
             message: 'Request successful',
         })
     } catch (error) {

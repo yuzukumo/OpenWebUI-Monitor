@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { query } from '@/lib/db/client'
 import { verifyApiToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(request: Request) {
     const authError = verifyApiToken(request)
     if (authError) {

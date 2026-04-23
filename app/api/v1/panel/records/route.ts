@@ -2,6 +2,8 @@ import { query } from '@/lib/db/client'
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
 export async function GET(req: Request) {
     const authError = verifyApiToken(req)
     if (authError) {
@@ -77,12 +79,28 @@ export async function GET(req: Request) {
 
         const dataParams = [...params, pageSize, offset]
         const records = await query(dataQuery, dataParams)
+        const userOptionsResult = await query<{
+            nickname: string
+        }>(
+            `SELECT DISTINCT nickname
+       FROM user_usage_records
+       ORDER BY nickname ASC`
+        )
+        const modelOptionsResult = await query<{
+            model_name: string
+        }>(
+            `SELECT DISTINCT model_name
+       FROM user_usage_records
+       ORDER BY model_name ASC`
+        )
 
         const total = parseInt(countResult.rows[0].count)
 
         return NextResponse.json({
             records: records.rows,
             total,
+            users: userOptionsResult.rows.map((row) => row.nickname),
+            models: modelOptionsResult.rows.map((row) => row.model_name),
         })
     } catch (error) {
         console.error('Fail to fetch usage records:', error)

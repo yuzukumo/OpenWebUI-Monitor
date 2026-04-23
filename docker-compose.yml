@@ -1,26 +1,31 @@
 services:
-    app:
-        image: docker.io/variantconst/openwebui-monitor:latest
+    openwebui-monitor:
+        container_name: openwebui-monitor-app
+        image: ghcr.io/yuzukumo/openwebui-monitor:latest
         ports:
-            - '7878:3000'
-        env_file:
-            - .env
+            - '127.0.0.1:3003:3000'
         environment:
-            - POSTGRES_HOST=${POSTGRES_HOST:-db}
+            - POSTGRES_HOST=${POSTGRES_HOST:-openwebui-monitor-db}
             - POSTGRES_PORT=${POSTGRES_PORT:-5432}
             - POSTGRES_USER=${POSTGRES_USER:-postgres}
             - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
             - POSTGRES_DATABASE=${POSTGRES_DATABASE:-openwebui_monitor}
+            - OPENWEBUI_DOMAIN=${OPENWEBUI_DOMAIN:-http://open-webui:8080}
+            - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+            - ACCESS_TOKEN=${ACCESS_TOKEN}
+            - API_KEY=${API_KEY}
+            - OPENWEBUI_USERS_SYNC_INTERVAL_MS=${OPENWEBUI_USERS_SYNC_INTERVAL_MS:-30000}
         depends_on:
-            db:
+            openwebui-monitor-db:
                 condition: service_healthy
         restart: always
 
-    db:
+    openwebui-monitor-db:
+        container_name: openwebui-monitor-db
         profiles:
             - ${POSTGRES_HOST:+never}
             - ${POSTGRES_HOST:-default}
-        image: postgres:15-alpine
+        image: postgres:18-alpine
         expose:
             - '5432'
         environment:
@@ -38,3 +43,4 @@ services:
 
 volumes:
     postgres_data:
+        name: openwebui-monitor-postgres-data

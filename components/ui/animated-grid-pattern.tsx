@@ -71,7 +71,7 @@ export function AnimatedGridPattern({
 
     useEffect(() => {
         const resizeObserver = new ResizeObserver((entries) => {
-            for (let entry of entries) {
+            for (const entry of entries) {
                 setDimensions({
                     width: entry.contentRect.width,
                     height: entry.contentRect.height,

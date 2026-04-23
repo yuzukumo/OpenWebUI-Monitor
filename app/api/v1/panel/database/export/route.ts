@@ -1,6 +1,8 @@
-import { query } from '@/lib/db/client'
+import { ensureTablesExist, query } from '@/lib/db/client'
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
+
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: Request) {
     const authError = verifyApiToken(req)
@@ -9,6 +11,8 @@ export async function GET(req: Request) {
     }
 
     try {
+        await ensureTablesExist()
+
         const users = await query('SELECT * FROM users ORDER BY id')
         const modelPrices = await query(
             'SELECT * FROM model_prices ORDER BY id'
@@ -18,7 +22,7 @@ export async function GET(req: Request) {
         )
 
         const exportData = {
-            version: '1.0',
+            version: '1.2',
             timestamp: new Date().toISOString(),
             data: {
                 users: users.rows,

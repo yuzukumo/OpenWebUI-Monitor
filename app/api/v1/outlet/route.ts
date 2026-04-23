@@ -1,11 +1,10 @@
 import { NextResponse } from 'next/server'
 import { encode } from 'gpt-tokenizer/model/gpt-4'
-import { Pool, PoolClient } from 'pg'
-import { createClient } from '@vercel/postgres'
-import { query, getClient } from '@/lib/db/client'
+import type { PoolClient } from 'pg'
+import { query, withTransaction } from '@/lib/db/client'
 import { getModelInletCost } from '@/lib/utils/inlet-cost'
 
-const isVercel = process.env.VERCEL === '1'
+export const dynamic = 'force-dynamic'
 
 interface Message {
     role: string
@@ -27,6 +26,10 @@ interface UsagePayload {
     total_tokens?: number
     input_tokens?: number
     output_tokens?: number
+    prompt_eval_count?: number
+    eval_count?: number
+    prompt_n?: number
+    predicted_n?: number
     [key: string]: unknown
 }
 
@@ -38,10 +41,12 @@ interface ModelPrice {
     per_msg_price: number
 }
 
-type DbClient = ReturnType<typeof createClient> | Pool | PoolClient
-
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value)
+}
+
+function getFirstFiniteNumber(...values: unknown[]): number | undefined {
+    return values.find(isFiniteNumber)
 }
 
 function getUsagePayload(message: Message): UsagePayload | null {
@@ -63,22 +68,21 @@ function getUsagePayload(message: Message): UsagePayload | null {
 function getTokenCountsFromUsage(
     usage: UsagePayload
 ): { inputTokens: number; outputTokens: number } | null {
-    const inputTokens = isFiniteNumber(usage.prompt_tokens)
-        ? usage.prompt_tokens
-        : isFiniteNumber(usage.input_tokens)
-          ? usage.input_tokens
-          : undefined
+    const inputTokens = getFirstFiniteNumber(
+        usage.input_tokens,
+        usage.prompt_tokens,
+        usage.prompt_eval_count,
+        usage.prompt_n
+    )
 
-    const outputTokens = isFiniteNumber(usage.completion_tokens)
-        ? usage.completion_tokens
-        : isFiniteNumber(usage.output_tokens)
-          ? usage.output_tokens
-          : undefined
+    const outputTokens = getFirstFiniteNumber(
+        usage.output_tokens,
+        usage.completion_tokens,
+        usage.eval_count,
+        usage.predicted_n
+    )
 
-    if (
-        typeof inputTokens === 'number' &&
-        typeof outputTokens === 'number'
-    ) {
+    if (typeof inputTokens === 'number' && typeof outputTokens === 'number') {
         return { inputTokens, outputTokens }
     }
 
@@ -126,12 +130,16 @@ function estimateMessageTokens(message: Message): number {
     return encode(getMessageTextContent(message.content)).length
 }
 
-async function getModelPrice(modelId: string): Promise<ModelPrice | null> {
+async function getModelPrice(
+    modelId: string,
+    client?: PoolClient
+): Promise<ModelPrice | null> {
     const result = await query(
         `SELECT id, name, input_price, output_price, per_msg_price 
      FROM model_prices 
      WHERE id = $1`,
-        [modelId]
+        [modelId],
+        client
     )
 
     if (result.rows[0]) {
@@ -164,27 +172,11 @@ async function getModelPrice(modelId: string): Promise<ModelPrice | null> {
 }
 
 export async function POST(req: Request) {
-    const client = (await getClient()) as DbClient
-    let pgClient: DbClient | null = null
-
     try {
-        if (isVercel) {
-            pgClient = client
-        } else {
-            pgClient = await (client as Pool).connect()
-        }
-
         const data = await req.json()
         const modelId = data.body.model
         const userId = data.user.id
         const userName = data.user.name || 'Unknown User'
-
-        await query('BEGIN')
-
-        const modelPrice = await getModelPrice(modelId)
-        if (!modelPrice) {
-            throw new Error(`Fail to fetch price info of model ${modelId}`)
-        }
 
         const lastMessage = data.body.messages[data.body.messages.length - 1]
 
@@ -199,94 +191,106 @@ export async function POST(req: Request) {
         } else {
             outputTokens = estimateMessageTokens(lastMessage)
             const totalTokens = data.body.messages.reduce(
-                (sum: number, msg: Message) =>
-                    sum + estimateMessageTokens(msg),
+                (sum: number, msg: Message) => sum + estimateMessageTokens(msg),
                 0
             )
             inputTokens = totalTokens - outputTokens
         }
 
-        let totalCost: number
-        if (outputTokens === 0) {
-            totalCost = 0
-            console.log('No charge for zero output tokens')
-        } else if (modelPrice.per_msg_price >= 0) {
-            totalCost = Number(modelPrice.per_msg_price)
-            console.log(
-                `Using fixed pricing: ${totalCost} (${modelPrice.per_msg_price} per message)`
+        const result = await withTransaction(async (client) => {
+            const modelPrice = await getModelPrice(modelId, client)
+            if (!modelPrice) {
+                throw new Error(`Fail to fetch price info of model ${modelId}`)
+            }
+
+            let totalCost: number
+            if (outputTokens === 0) {
+                totalCost = 0
+                console.log('No charge for zero output tokens')
+            } else if (modelPrice.per_msg_price >= 0) {
+                totalCost = Number(modelPrice.per_msg_price)
+                console.log(
+                    `Using fixed pricing: ${totalCost} (${modelPrice.per_msg_price} per message)`
+                )
+            } else {
+                const inputCost =
+                    (inputTokens / 1_000_000) * modelPrice.input_price
+                const outputCost =
+                    (outputTokens / 1_000_000) * modelPrice.output_price
+                totalCost = inputCost + outputCost
+            }
+
+            const inletCost = getModelInletCost(modelId)
+            const actualCost = totalCost - inletCost
+
+            const userResult = await query(
+                `UPDATE users 
+           SET balance = LEAST(
+             balance - CAST($1 AS DECIMAL(16,4)),
+             999999.9999
+           ),
+               used_balance = GREATEST(
+                 COALESCE(used_balance, 0) + CAST($1 AS DECIMAL(16,4)),
+                 0
+               )
+           WHERE id = $2
+           RETURNING balance, used_balance`,
+                [actualCost, userId],
+                client
             )
-        } else {
-            const inputCost = (inputTokens / 1_000_000) * modelPrice.input_price
-            const outputCost =
-                (outputTokens / 1_000_000) * modelPrice.output_price
-            totalCost = inputCost + outputCost
-        }
 
-        const inletCost = getModelInletCost(modelId)
+            if (userResult.rows.length === 0) {
+                throw new Error('User does not exist')
+            }
 
-        const actualCost = totalCost - inletCost
+            const newBalance = Number(userResult.rows[0].balance)
+            const usedBalance = Number(userResult.rows[0].used_balance)
 
-        const userResult = await query(
-            `UPDATE users 
-       SET balance = LEAST(
-         balance - CAST($1 AS DECIMAL(16,4)),
-         999999.9999
-       )
-       WHERE id = $2
-       RETURNING balance`,
-            [actualCost, userId]
-        )
+            if (newBalance > 999999.9999) {
+                throw new Error('Balance exceeds maximum allowed value')
+            }
 
-        if (userResult.rows.length === 0) {
-            throw new Error('User does not exist')
-        }
+            await query(
+                `INSERT INTO user_usage_records (
+            user_id, nickname, model_name, 
+            input_tokens, output_tokens, 
+            cost, balance_after
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [
+                    userId,
+                    userName,
+                    modelId,
+                    inputTokens,
+                    outputTokens,
+                    totalCost,
+                    newBalance,
+                ],
+                client
+            )
 
-        const newBalance = Number(userResult.rows[0].balance)
-
-        if (newBalance > 999999.9999) {
-            throw new Error('Balance exceeds maximum allowed value')
-        }
-
-        await query(
-            `INSERT INTO user_usage_records (
-        user_id, nickname, model_name, 
-        input_tokens, output_tokens, 
-        cost, balance_after
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-            [
-                userId,
-                userName,
-                modelId,
+            return {
                 inputTokens,
                 outputTokens,
                 totalCost,
                 newBalance,
-            ]
-        )
-
-        await query('COMMIT')
+                usedBalance,
+            }
+        })
 
         console.log(
             JSON.stringify({
                 success: true,
-                inputTokens,
-                outputTokens,
-                totalCost,
-                newBalance,
+                ...result,
                 message: 'Request successful',
             })
         )
 
         return NextResponse.json({
             success: true,
-            inputTokens,
-            outputTokens,
-            totalCost,
-            newBalance,
+            ...result,
             message: 'Request successful',
         })
     } catch (error) {
-        await query('ROLLBACK')
         console.error('Outlet error:', error)
         return NextResponse.json(
             {
@@ -300,9 +304,5 @@ export async function POST(req: Request) {
             },
             { status: 500 }
         )
-    } finally {
-        if (!isVercel && pgClient && 'release' in pgClient) {
-            pgClient.release()
-        }
     }
 }

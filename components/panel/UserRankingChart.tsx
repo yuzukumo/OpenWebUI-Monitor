@@ -212,7 +212,7 @@ export default function UserRankingChart({
     onMetricChange,
 }: UserRankingChartProps) {
     const { t } = useTranslation('common')
-    const chartRef = useRef<ECharts>()
+    const chartRef = useRef<ECharts | null>(null)
 
     useEffect(() => {
         const handleResize = () => {

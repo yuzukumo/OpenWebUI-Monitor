@@ -1,6 +1,35 @@
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
+function buildOpenWebUIModelTestPayload(modelId: string) {
+    const prompt = 'test, just say hi'
+    const userMessageId = crypto.randomUUID()
+
+    return {
+        model: modelId,
+        messages: [
+            {
+                role: 'user',
+                content: prompt,
+            },
+        ],
+        session_id: `monitor-model-test-${crypto.randomUUID()}`,
+        id: crypto.randomUUID(),
+        parent_id: null,
+        user_message: {
+            id: userMessageId,
+            parentId: null,
+            childrenIds: [],
+            role: 'user',
+            content: prompt,
+            timestamp: Math.floor(Date.now() / 1000),
+            models: [modelId],
+        },
+    }
+}
+
 export async function POST(req: Request) {
     const authError = verifyApiToken(req)
     if (authError) {
@@ -35,15 +64,7 @@ export async function POST(req: Request) {
                 Authorization: `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                model: modelId,
-                messages: [
-                    {
-                        role: 'user',
-                        content: 'test, just say hi',
-                    },
-                ],
-            }),
+            body: JSON.stringify(buildOpenWebUIModelTestPayload(modelId)),
         })
 
         const responseText = await response.text()
@@ -67,17 +88,23 @@ export async function POST(req: Request) {
             })
         }
 
-        if (!data.choices?.[0]?.message?.content) {
+        const responseMessage =
+            data?.choices?.[0]?.message?.content ||
+            (data?.status === true && Array.isArray(data?.task_ids)
+                ? `Task accepted by OpenWebUI (${data.task_ids[0]})`
+                : null)
+
+        if (!responseMessage) {
             return NextResponse.json({
                 success: false,
-                message: 'Invalid response format',
+                message: `Unexpected response format: ${responseText}`,
             })
         }
 
         return NextResponse.json({
             success: true,
             message: 'Test successful',
-            response: data.choices[0].message.content,
+            response: responseMessage,
         })
     } catch (error) {
         return NextResponse.json({

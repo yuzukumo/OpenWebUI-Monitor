@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { updateModelPrice } from '@/lib/db/client'
 import { verifyApiToken } from '@/lib/auth'
 
+export const dynamic = 'force-dynamic'
+
 interface PriceUpdate {
     id: string
     input_price: number

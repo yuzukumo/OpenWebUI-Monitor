@@ -2,10 +2,13 @@ import type { Metadata } from 'next'
 import localFont from 'next/font/local'
 import './globals.css'
 import Header from '@/components/Header'
+import AntdReact19Patch from '@/components/AntdReact19Patch'
 import AuthCheck from '@/components/AuthCheck'
 import { Toaster } from '@/components/ui/toaster'
 import I18nProvider from '@/components/I18nProvider'
 import HtmlLangWrapper from '@/components/HtmlLangWrapper'
+
+export const dynamic = 'force-dynamic'
 
 const geistSans = localFont({
     src: './fonts/GeistVF.woff',
@@ -31,6 +34,7 @@ export default function RootLayout({
     return (
         <html lang="zh-CN">
             <body>
+                <AntdReact19Patch />
                 <div id="modal-root" className="relative z-[100]" />
                 <I18nProvider>
                     <HtmlLangWrapper />

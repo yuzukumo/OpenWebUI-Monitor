@@ -262,7 +262,7 @@ export default function ModelDistributionChart({
     metric,
     onMetricChange,
 }: ModelDistributionChartProps) {
-    const chartRef = useRef<ECharts>()
+    const chartRef = useRef<ECharts | null>(null)
     const { t } = useTranslation('common')
 
     useEffect(() => {

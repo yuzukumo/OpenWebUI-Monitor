@@ -1,26 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Table, Input, message, Modal } from 'antd'
+import { Table, Input, message } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-} from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
-import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import { Trash2, Search, X, Unlock, Lock } from 'lucide-react'
+import { RotateCcw, Search, X } from 'lucide-react'
 import { EditableCell } from '@/components/editable-cell'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
@@ -32,7 +16,7 @@ interface User {
     name: string
     role: string
     balance: number
-    deleted: boolean
+    used_balance: number
 }
 
 interface TFunction {
@@ -157,7 +141,15 @@ const UserDetailsModal = ({
                                 </div>
                                 <div className="space-y-2">
                                     <div className="text-sm text-muted-foreground">
-                                        {t('users.balance')}
+                                        {t('users.usedBalance')}
+                                    </div>
+                                    <div className="p-3 bg-muted/50 rounded-lg text-sm">
+                                        {formatBalance(user.used_balance)}
+                                    </div>
+                                </div>
+                                <div className="space-y-2">
+                                    <div className="text-sm text-muted-foreground">
+                                        {t('users.remainingBalance')}
                                     </div>
                                     <div className="p-3 bg-muted/50 rounded-lg text-sm">
                                         {formatBalance(user.balance)}
@@ -165,120 +157,6 @@ const UserDetailsModal = ({
                                 </div>
                             </div>
                         </motion.div>
-                    </div>
-                </div>
-            </motion.div>
-        </motion.div>,
-        document.getElementById('modal-root') || document.body
-    )
-}
-
-const BlockConfirmModal = ({
-    user,
-    onClose,
-    onConfirm,
-    t,
-}: {
-    user: User | null
-    onClose: () => void
-    onConfirm: () => void
-    t: TFunction
-}) => {
-    if (!user) return null
-
-    return createPortal(
-        <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center"
-            style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0 }}
-            onClick={onClose}
-        >
-            <motion.div
-                initial={{ scale: 0.95, opacity: 0, y: 20 }}
-                animate={{ scale: 1, opacity: 1, y: 0 }}
-                exit={{ scale: 0.95, opacity: 0, y: 20 }}
-                transition={{ type: 'spring', duration: 0.3 }}
-                className="w-full max-w-md mx-auto px-4"
-                onClick={(e) => e.stopPropagation()}
-            >
-                <div className="bg-card rounded-2xl border border-border/50 shadow-xl overflow-hidden">
-                    <div className="p-6">
-                        <div className="flex items-center gap-4 mb-6">
-                            <div
-                                className={`
-                h-12 w-12 rounded-full flex items-center justify-center
-                ${
-                    user.deleted
-                        ? 'bg-primary/10 text-primary'
-                        : 'bg-destructive/10 text-destructive'
-                }
-              `}
-                            >
-                                {user.deleted ? (
-                                    <Unlock className="w-6 h-6" />
-                                ) : (
-                                    <Lock className="w-6 h-6" />
-                                )}
-                            </div>
-                            <div className="flex-1">
-                                <h3 className="text-lg font-semibold mb-1">
-                                    {user.deleted
-                                        ? t(
-                                              'users.blacklist.unblockConfirm.title'
-                                          )
-                                        : t(
-                                              'users.blacklist.blockConfirm.title'
-                                          )}
-                                </h3>
-                                <p className="text-sm text-muted-foreground">
-                                    {user.deleted
-                                        ? t(
-                                              'users.blacklist.unblockConfirm.description',
-                                              {
-                                                  name: user.name,
-                                              }
-                                          )
-                                        : t(
-                                              'users.blacklist.blockConfirm.description',
-                                              {
-                                                  name: user.name,
-                                              }
-                                          )}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="flex gap-3">
-                            <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={onClose}
-                                className="flex-1 px-4 py-2 rounded-xl bg-muted/60 hover:bg-muted/80 
-                  text-muted-foreground font-medium transition-colors"
-                            >
-                                {t('common.cancel')}
-                            </motion.button>
-                            <motion.button
-                                whileHover={{ scale: 1.02 }}
-                                whileTap={{ scale: 0.98 }}
-                                onClick={onConfirm}
-                                className={`
-                  flex-1 px-4 py-2 rounded-xl font-medium text-white
-                  transition-colors
-                  ${
-                      user.deleted
-                          ? 'bg-primary hover:bg-primary/90'
-                          : 'bg-destructive hover:bg-destructive/90'
-                  }
-                `}
-                            >
-                                {user.deleted
-                                    ? t('users.blacklist.unblock')
-                                    : t('users.blacklist.block')}
-                            </motion.button>
-                        </div>
                     </div>
                 </div>
             </motion.div>
@@ -299,13 +177,12 @@ const LoadingState = ({ t }: { t: TFunction }) => (
 export default function UsersPage() {
     const { t } = useTranslation('common')
     const [users, setUsers] = useState<User[]>([])
-    const [blacklistUsers, setBlacklistUsers] = useState<User[]>([])
     const [loading, setLoading] = useState(false)
     const [total, setTotal] = useState(0)
     const [currentPage, setCurrentPage] = useState(1)
     const [editingKey, setEditingKey] = useState<string>('')
+    const [resettingUserId, setResettingUserId] = useState<string | null>(null)
     const [selectedUser, setSelectedUser] = useState<User | null>(null)
-    const [userToDelete, setUserToDelete] = useState<User | null>(null)
     const [sortInfo, setSortInfo] = useState<{
         field: string | null
         order: 'ascend' | 'descend' | null
@@ -314,14 +191,11 @@ export default function UsersPage() {
         order: null,
     })
     const [searchText, setSearchText] = useState('')
-    const [showBlacklist, setShowBlacklist] = useState(false)
-    const [blacklistCurrentPage, setBlacklistCurrentPage] = useState(1)
-    const [blacklistTotal, setBlacklistTotal] = useState(0)
 
-    const fetchUsers = async (page: number, isBlacklist: boolean = false) => {
+    const fetchUsers = async (page: number) => {
         setLoading(true)
         try {
-            let url = `/api/v1/users?page=${page}&deleted=${isBlacklist}`
+            let url = `/api/v1/users?page=${page}`
             if (sortInfo.field && sortInfo.order) {
                 url += `&sortField=${sortInfo.field}&sortOrder=${sortInfo.order}`
             }
@@ -338,13 +212,14 @@ export default function UsersPage() {
             const data = await res.json()
             if (!res.ok) throw new Error(data.error)
 
-            if (isBlacklist) {
-                setBlacklistUsers(data.users)
-                setBlacklistTotal(data.total)
-            } else {
-                setUsers(data.users)
-                setTotal(data.total)
-            }
+            setUsers(
+                data.users.map((user: User) => ({
+                    ...user,
+                    balance: Number(user.balance),
+                    used_balance: Number(user.used_balance),
+                }))
+            )
+            setTotal(data.total)
         } catch (err) {
             console.error(err)
             message.error(t('users.message.fetchError'))
@@ -353,35 +228,9 @@ export default function UsersPage() {
         }
     }
 
-    const fetchBlacklistTotal = async () => {
-        try {
-            const token = localStorage.getItem('access_token')
-            const res = await fetch(
-                `/api/v1/users?page=1&deleted=true&pageSize=1`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${token}`,
-                    },
-                }
-            )
-            const data = await res.json()
-            if (!res.ok) throw new Error(data.error)
-            setBlacklistTotal(data.total)
-        } catch (err) {
-            console.error(err)
-        }
-    }
-
     useEffect(() => {
-        fetchUsers(currentPage, false)
-        fetchBlacklistTotal()
+        fetchUsers(currentPage)
     }, [currentPage, sortInfo, searchText])
-
-    useEffect(() => {
-        if (showBlacklist) {
-            fetchUsers(blacklistCurrentPage, true)
-        }
-    }, [blacklistCurrentPage, showBlacklist, sortInfo, searchText])
 
     const handleUpdateBalance = async (userId: string, newBalance: number) => {
         try {
@@ -415,11 +264,16 @@ export default function UsersPage() {
                     user.id === userId ? { ...user, balance: newBalance } : user
                 )
             )
+            setSelectedUser((prevUser) =>
+                prevUser?.id === userId
+                    ? { ...prevUser, balance: newBalance }
+                    : prevUser
+            )
 
             toast.success(t('users.message.updateBalance.success'))
             setEditingKey('')
 
-            fetchUsers(currentPage, false)
+            fetchUsers(currentPage)
         } catch (err) {
             console.error('Failed to update balance:', err)
             toast.error(
@@ -430,69 +284,55 @@ export default function UsersPage() {
         }
     }
 
-    const handleDeleteUser = async () => {
-        if (!userToDelete) return
-
+    const handleResetUsedBalance = async (userId: string) => {
         try {
+            setResettingUserId(userId)
+
             const token = localStorage.getItem('access_token')
-            const res = await fetch(`/api/v1/users/${userToDelete.id}`, {
-                method: 'PATCH',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`,
-                },
-                body: JSON.stringify({
-                    deleted: !userToDelete.deleted,
-                }),
-            })
-
-            if (!res.ok) {
-                const error = await res.json()
-                throw new Error(error.message)
+            if (!token) {
+                throw new Error(t('auth.unauthorized'))
             }
 
-            if (!userToDelete.deleted) {
-                const newTotal = total - 1
-                const maxPage = Math.ceil(newTotal / 20)
-                if (currentPage > maxPage && maxPage > 0) {
-                    setCurrentPage(maxPage)
-                } else {
-                    fetchUsers(currentPage, false)
+            const res = await fetch(
+                `/api/v1/users/${userId}/used-balance/reset`,
+                {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${token}`,
+                    },
                 }
-                setBlacklistTotal((prev) => prev + 1)
-            } else {
-                const newBlacklistTotal = blacklistTotal - 1
-                const maxBlacklistPage = Math.ceil(newBlacklistTotal / 20)
-                if (
-                    blacklistCurrentPage > maxBlacklistPage &&
-                    maxBlacklistPage > 0
-                ) {
-                    setBlacklistCurrentPage(maxBlacklistPage)
-                } else {
-                    fetchUsers(blacklistCurrentPage, true)
-                }
-                setBlacklistTotal((prev) => prev - 1)
-            }
-
-            if (userToDelete.deleted) {
-                fetchUsers(currentPage, false)
-            } else if (showBlacklist) {
-                fetchUsers(blacklistCurrentPage, true)
-            }
-
-            toast.success(
-                userToDelete.deleted
-                    ? t('users.message.unblockSuccess')
-                    : t('users.message.blockSuccess')
             )
+
+            const data = await res.json()
+
+            if (!res.ok || !data.success) {
+                throw new Error(
+                    data.error || t('users.message.resetUsedBalance.error')
+                )
+            }
+
+            setUsers(
+                users.map((user) =>
+                    user.id === userId ? { ...user, used_balance: 0 } : user
+                )
+            )
+            setSelectedUser((prevUser) =>
+                prevUser?.id === userId
+                    ? { ...prevUser, used_balance: 0 }
+                    : prevUser
+            )
+
+            toast.success(t('users.message.resetUsedBalance.success'))
+            fetchUsers(currentPage)
         } catch (err) {
+            console.error('Failed to reset used balance:', err)
             toast.error(
-                userToDelete.deleted
-                    ? t('users.message.unblockError')
-                    : t('users.message.blockError')
+                err instanceof Error
+                    ? err.message
+                    : t('users.message.resetUsedBalance.error')
             )
         } finally {
-            setUserToDelete(null)
+            setResettingUserId(null)
         }
     }
 
@@ -524,77 +364,61 @@ export default function UsersPage() {
                             </p>
                         </div>
                     </div>
-
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation()
-                            setUserToDelete(record)
-                        }}
-                        className={`
-              shrink-0
-              p-2
-              rounded-md
-              transition-colors
-              ${
-                  record.deleted
-                      ? 'text-muted-foreground/60 hover:text-muted-foreground'
-                      : 'text-muted-foreground/60 hover:text-muted-foreground'
-              }
-            `}
-                    >
-                        {record.deleted ? (
-                            <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M12 15l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
-                                />
-                            </svg>
-                        ) : (
-                            <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-                                />
-                            </svg>
-                        )}
-                    </button>
                 </div>
 
                 <div className="mt-6">
-                    <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">
-                            {t('users.balance')}
-                        </span>
-                        <div className="flex-1 max-w-[200px]">
-                            <EditableCell
-                                value={record.balance}
-                                isEditing={record.id === editingKey}
-                                onEdit={() => setEditingKey(record.id)}
-                                onSubmit={(value) =>
-                                    handleUpdateBalance(record.id, value)
-                                }
-                                onCancel={() => setEditingKey('')}
-                                t={t}
-                                validateValue={(value) => ({
-                                    isValid: isFinite(value),
-                                    errorMessage: t('error.invalidNumber'),
-                                    maxValue: 999999.9999,
-                                })}
-                            />
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">
+                                {t('users.usedBalance')}
+                            </span>
+                            <span className="text-sm font-medium">
+                                {formatBalance(record.used_balance)}
+                            </span>
+                        </div>
+                        <div className="space-y-2">
+                            <span className="text-sm text-muted-foreground">
+                                {t('users.remainingBalance')}
+                            </span>
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1 max-w-[200px]">
+                                    <EditableCell
+                                        value={record.balance}
+                                        isEditing={record.id === editingKey}
+                                        onEdit={() => setEditingKey(record.id)}
+                                        onSubmit={(value) =>
+                                            handleUpdateBalance(
+                                                record.id,
+                                                value
+                                            )
+                                        }
+                                        onCancel={() => setEditingKey('')}
+                                        t={t}
+                                        validateValue={(value) => ({
+                                            isValid: isFinite(value),
+                                            errorMessage: t(
+                                                'error.invalidNumber'
+                                            ),
+                                            maxValue: 999999.9999,
+                                        })}
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    data-testid={`reset-used-balance-${record.id}`}
+                                    disabled={
+                                        resettingUserId === record.id ||
+                                        Number(record.used_balance) <= 0
+                                    }
+                                    onClick={() =>
+                                        handleResetUsedBalance(record.id)
+                                    }
+                                    className="inline-flex items-center gap-2 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                    <RotateCcw className="h-3.5 w-3.5" />
+                                    {t('users.resetUsedBalance')}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -602,12 +426,12 @@ export default function UsersPage() {
         )
     }
 
-    const getColumns = (isBlacklist: boolean = false): ColumnsType<User> => {
+    const getColumns = (): ColumnsType<User> => {
         const baseColumns: ColumnsType<User> = [
             {
                 title: t('users.userInfo'),
                 key: 'userInfo',
-                width: '65%',
+                width: '46%',
                 render: (_, record) => (
                     <div
                         className="flex items-center gap-4 cursor-pointer py-1"
@@ -633,13 +457,27 @@ export default function UsersPage() {
                 ),
             },
             {
-                title: t('users.balance'),
-                dataIndex: 'balance',
-                key: 'balance',
-                width: '35%',
+                title: t('users.usedBalance'),
+                dataIndex: 'used_balance',
+                key: 'used_balance',
+                width: '18%',
                 align: 'left',
                 sorter: {
-                    compare: (a, b) => a.balance - b.balance,
+                    compare: (a, b) =>
+                        Number(a.used_balance) - Number(b.used_balance),
+                    multiple: 2,
+                },
+                render: (usedBalance: number | string) =>
+                    formatBalance(usedBalance),
+            },
+            {
+                title: t('users.remainingBalance'),
+                dataIndex: 'balance',
+                key: 'balance',
+                width: '24%',
+                align: 'left',
+                sorter: {
+                    compare: (a, b) => Number(a.balance) - Number(b.balance),
                     multiple: 1,
                 },
                 render: (balance: number, record) => {
@@ -671,54 +509,23 @@ export default function UsersPage() {
             {
                 title: t('users.actions'),
                 key: 'actions',
-                width: '48px',
-                align: 'center',
+                width: '12%',
                 render: (_, record) => (
                     <button
-                        onClick={(e) => {
-                            e.stopPropagation()
-                            setUserToDelete(record)
+                        type="button"
+                        data-testid={`reset-used-balance-${record.id}`}
+                        disabled={
+                            resettingUserId === record.id ||
+                            Number(record.used_balance) <= 0
+                        }
+                        onClick={(event) => {
+                            event.stopPropagation()
+                            handleResetUsedBalance(record.id)
                         }}
-                        className={`
-              p-2
-              rounded-md
-              transition-colors
-              ${
-                  record.deleted
-                      ? 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40'
-                      : 'text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/40'
-              }
-            `}
+                        className="inline-flex items-center gap-2 rounded-lg border border-border/50 px-3 py-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                        {record.deleted ? (
-                            <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M12 15l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
-                                />
-                            </svg>
-                        ) : (
-                            <svg
-                                className="w-4 h-4"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                            >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"
-                                />
-                            </svg>
-                        )}
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {t('users.resetUsedBalance')}
                     </button>
                 ),
             },
@@ -869,16 +676,15 @@ export default function UsersPage() {
                 <div className="rounded-xl border border-border/40 bg-card shadow-sm overflow-hidden">
                     {loading ? (
                         <LoadingState t={t} />
-                    ) : users.filter((user) => !user.deleted).length > 0 ? (
+                    ) : users.length > 0 ? (
                         <Table
-                            columns={getColumns(false)}
-                            dataSource={users
-                                .filter((user) => !user.deleted)
-                                .map((user) => ({
-                                    key: user.id,
-                                    ...user,
-                                    balance: Number(user.balance),
-                                }))}
+                            columns={getColumns()}
+                            dataSource={users.map((user) => ({
+                                key: user.id,
+                                ...user,
+                                balance: Number(user.balance),
+                                used_balance: Number(user.used_balance),
+                            }))}
                             rowKey="id"
                             loading={false}
                             className={TABLE_STYLES}
@@ -916,97 +722,14 @@ export default function UsersPage() {
                 <div className="grid gap-4">
                     {loading ? (
                         <LoadingState t={t} />
-                    ) : users.filter((user) => !user.deleted).length > 0 ? (
-                        users
-                            .filter((user) => !user.deleted)
-                            .map((user) => (
-                                <UserCard key={user.id} record={user} />
-                            ))
+                    ) : users.length > 0 ? (
+                        users.map((user) => (
+                            <UserCard key={user.id} record={user} />
+                        ))
                     ) : (
                         <EmptyState searchText={searchText} />
                     )}
                 </div>
-            </div>
-
-            <div className="space-y-4">
-                <button
-                    onClick={() => setShowBlacklist(!showBlacklist)}
-                    className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                    <svg
-                        className={`w-4 h-4 transition-transform ${
-                            showBlacklist ? 'rotate-180' : ''
-                        }`}
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                    >
-                        <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M19 9l-7 7-7-7"
-                        />
-                    </svg>
-                    {t('users.blacklist.title')} ({blacklistTotal})
-                </button>
-
-                {showBlacklist && (
-                    <div className="space-y-4">
-                        <div className="hidden sm:block">
-                            <div className="rounded-xl border border-border/40 bg-card shadow-sm overflow-hidden">
-                                {loading ? (
-                                    <LoadingState t={t} />
-                                ) : blacklistUsers.length > 0 ? (
-                                    <Table
-                                        columns={getColumns(true)}
-                                        dataSource={blacklistUsers.map(
-                                            (user) => ({
-                                                key: user.id,
-                                                ...user,
-                                                balance: Number(user.balance),
-                                            })
-                                        )}
-                                        rowKey="id"
-                                        loading={false}
-                                        className={TABLE_STYLES}
-                                        pagination={{
-                                            total: blacklistTotal,
-                                            pageSize: 20,
-                                            current: blacklistCurrentPage,
-                                            onChange: (page) => {
-                                                setBlacklistCurrentPage(page)
-                                                setEditingKey('')
-                                            },
-                                            showTotal: (total) => (
-                                                <span className="text-sm text-muted-foreground">
-                                                    {t('users.total')} {total}{' '}
-                                                    {t('users.totalRecords')}
-                                                </span>
-                                            ),
-                                        }}
-                                    />
-                                ) : (
-                                    <EmptyState searchText={searchText} />
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="sm:hidden">
-                            <div className="grid gap-4">
-                                {loading ? (
-                                    <LoadingState t={t} />
-                                ) : blacklistUsers.length > 0 ? (
-                                    blacklistUsers.map((user) => (
-                                        <UserCard key={user.id} record={user} />
-                                    ))
-                                ) : (
-                                    <EmptyState searchText={searchText} />
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                )}
             </div>
 
             <AnimatePresence>
@@ -1014,17 +737,6 @@ export default function UsersPage() {
                     <UserDetailsModal
                         user={selectedUser}
                         onClose={() => setSelectedUser(null)}
-                        t={t}
-                    />
-                )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-                {userToDelete && (
-                    <BlockConfirmModal
-                        user={userToDelete}
-                        onClose={() => setUserToDelete(null)}
-                        onConfirm={handleDeleteUser}
                         t={t}
                     />
                 )}
