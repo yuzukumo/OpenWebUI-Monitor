@@ -32,6 +32,13 @@ interface OpenWebUISession {
     role: string
 }
 
+interface OpenWebUIUser {
+    id: string
+    email: string
+    name: string
+    role: string
+}
+
 interface MonitorUser {
     id: string
     email: string
@@ -39,6 +46,7 @@ interface MonitorUser {
     role: string
     balance: number | string
     used_balance: number | string
+    openwebui_order?: number | null
     deleted: boolean
     exists_in_openwebui?: boolean
 }
@@ -83,6 +91,15 @@ interface ApiCheckSummary {
     sync_all: { status: number; success: boolean }
     records_export: { status: number }
     database_export: { status: number }
+}
+
+interface ChromiumCheckSummary {
+    screenshots: Record<string, string>
+    users_page: {
+        updated_balance: number
+        balance_update_without_refetch: boolean
+        used_balance_reset_without_refetch: boolean
+    }
 }
 
 const __filename = fileURLToPath(import.meta.url)
@@ -551,6 +568,41 @@ async function installMonitorFunction(adminToken: string) {
     )
 }
 
+function normalizeOpenWebUIUsers(payload: unknown): OpenWebUIUser[] {
+    if (Array.isArray(payload)) {
+        return payload as OpenWebUIUser[]
+    }
+
+    if (payload && typeof payload === 'object') {
+        const data = payload as { users?: unknown; data?: unknown }
+
+        if (Array.isArray(data.users)) {
+            return data.users as OpenWebUIUser[]
+        }
+
+        if (Array.isArray(data.data)) {
+            return data.data as OpenWebUIUser[]
+        }
+    }
+
+    throw new Error(
+        `Unexpected OpenWebUI users payload: ${JSON.stringify(payload)}`
+    )
+}
+
+async function fetchOpenWebUIUsers(
+    adminToken: string
+): Promise<OpenWebUIUser[]> {
+    const { data } = await requestJson<unknown>(
+        `${OWU_BASE_URL}/api/v1/users/all`,
+        {
+            headers: jsonHeaders(adminToken),
+        }
+    )
+
+    return normalizeOpenWebUIUsers(data)
+}
+
 async function fetchMonitorUsers(): Promise<MonitorUsersResponse> {
     const { data } = await requestJson<MonitorUsersResponse>(
         `${MONITOR_BASE_URL}/api/v1/users?page=1&pageSize=100`,
@@ -567,6 +619,21 @@ async function fetchMonitorUsers(): Promise<MonitorUsersResponse> {
 
 function findMonitorUser(usersResponse: MonitorUsersResponse, userId: string) {
     return usersResponse.users.find((user) => user.id === userId) || null
+}
+
+function assertMonitorOrderMatchesOpenWebUI(
+    usersResponse: MonitorUsersResponse,
+    openWebUIUsers: OpenWebUIUser[],
+    description: string
+) {
+    const monitorUserIds = usersResponse.users.map((user) => user.id)
+    const openWebUIUserIds = openWebUIUsers.map((user) => user.id)
+
+    assert.deepEqual(
+        monitorUserIds,
+        openWebUIUserIds,
+        `${description}\nmonitor=${JSON.stringify(monitorUserIds)}\nowu=${JSON.stringify(openWebUIUserIds)}`
+    )
 }
 
 async function waitForUserSync(
@@ -846,12 +913,17 @@ async function runMonitorApiChecks(): Promise<ApiCheckSummary> {
     }
 }
 
-async function runChromiumChecks(packageVersion: string, adminUserId: string) {
+async function runChromiumChecks(
+    packageVersion: string,
+    adminUserId: string
+): Promise<ChromiumCheckSummary> {
     const browser = await chromium.launch({
         headless: process.env.E2E_HEADLESS !== '0',
     })
 
     const screenshots: Record<string, string> = {}
+    let usersListRequestCount = 0
+    const updatedBalanceValue = '42.4242'
 
     try {
         const context = await browser.newContext({
@@ -873,6 +945,17 @@ async function runChromiumChecks(packageVersion: string, adminUserId: string) {
         )
 
         const page = await context.newPage()
+
+        page.on('request', (request) => {
+            if (
+                request.method() === 'GET' &&
+                request
+                    .url()
+                    .startsWith(`${MONITOR_BASE_URL}/api/v1/users?page=`)
+            ) {
+                usersListRequestCount += 1
+            }
+        })
 
         await page.goto(`${MONITOR_BASE_URL}/token`, {
             waitUntil: 'networkidle',
@@ -907,6 +990,44 @@ async function runChromiumChecks(packageVersion: string, adminUserId: string) {
         await page.waitForSelector('text=Remaining Balance')
         await page.waitForSelector(`text=${ADMIN_USER.email}`)
 
+        const adminRow = page
+            .locator('tr')
+            .filter({ hasText: ADMIN_USER.email })
+            .first()
+        await adminRow.waitFor()
+
+        const usersListRequestsBeforeBalanceUpdate = usersListRequestCount
+
+        await adminRow.locator('td').nth(2).click()
+        await adminRow
+            .locator('.editable-cell-input input')
+            .fill(updatedBalanceValue)
+
+        const updateBalanceResponse = page.waitForResponse(
+            (response) =>
+                response
+                    .url()
+                    .includes(`/api/v1/users/${adminUserId}/balance`) &&
+                response.request().method() === 'PUT'
+        )
+
+        await adminRow.locator('.editable-cell-input button').click()
+        await updateBalanceResponse
+        await page.waitForTimeout(750)
+
+        assert.equal(
+            usersListRequestCount,
+            usersListRequestsBeforeBalanceUpdate,
+            'Updating user balance should not refetch the users list'
+        )
+        assert(
+            (await adminRow.locator('td').nth(2).textContent())?.includes(
+                updatedBalanceValue
+            ),
+            'Updated balance was not reflected in the users table'
+        )
+
+        const usersListRequestsBeforeReset = usersListRequestCount
         const resetUsedBalanceResponse = page.waitForResponse(
             (response) =>
                 response
@@ -923,7 +1044,19 @@ async function runChromiumChecks(packageVersion: string, adminUserId: string) {
             .first()
             .click()
         await resetUsedBalanceResponse
-        await page.reload({ waitUntil: 'networkidle' })
+        await page.waitForTimeout(750)
+
+        assert.equal(
+            usersListRequestCount,
+            usersListRequestsBeforeReset,
+            'Resetting used balance should not refetch the users list'
+        )
+        assert(
+            (await adminRow.locator('td').nth(1).textContent())?.includes(
+                '0.0000'
+            ),
+            'Reset used balance was not reflected in the users table'
+        )
 
         screenshots.users = path.join(SCREENSHOTS_DIR, 'users.png')
         await page.screenshot({ path: screenshots.users, fullPage: true })
@@ -949,7 +1082,14 @@ async function runChromiumChecks(packageVersion: string, adminUserId: string) {
         await browser.close()
     }
 
-    return screenshots
+    return {
+        screenshots,
+        users_page: {
+            updated_balance: Number(updatedBalanceValue),
+            balance_update_without_refetch: true,
+            used_balance_reset_without_refetch: true,
+        },
+    }
 }
 
 async function main() {
@@ -1132,6 +1272,15 @@ async function main() {
             'Expected exactly one synced subject user before rename'
         )
 
+        const openWebUIUsersAfterInitialSync = await fetchOpenWebUIUsers(
+            adminSession.token
+        )
+        assertMonitorOrderMatchesOpenWebUI(
+            initialUsers,
+            openWebUIUsersAfterInitialSync,
+            'Monitor default user order should match OpenWebUI user order after initial sync'
+        )
+
         logStep('Verifying rename sync by stable OpenWebUI user id')
         await updateOpenWebUIUserName(
             adminSession.token,
@@ -1190,6 +1339,15 @@ async function main() {
                 (user) => user.id === syncSubjectSession.id
             ),
             'Deleted OpenWebUI user still appears in active monitor users'
+        )
+
+        const openWebUIUsersAfterDelete = await fetchOpenWebUIUsers(
+            adminSession.token
+        )
+        assertMonitorOrderMatchesOpenWebUI(
+            activeUsersAfterDelete,
+            openWebUIUsersAfterDelete,
+            'Monitor default user order should match OpenWebUI user order after deletions'
         )
 
         const databaseExport = await fetchDatabaseExport()
@@ -1261,7 +1419,7 @@ async function main() {
         )
 
         const apiChecks = await runMonitorApiChecks()
-        const screenshots = await runChromiumChecks(
+        const chromiumChecks = await runChromiumChecks(
             packageJson.version,
             adminSession.id
         )
@@ -1282,7 +1440,7 @@ async function main() {
         )
         assert(
             Number(adminUserAfterReset.balance) ===
-                Number(adminUserBeforeReset.balance),
+                chromiumChecks.users_page.updated_balance,
             'Resetting used balance should not change remaining balance'
         )
 
@@ -1299,6 +1457,7 @@ async function main() {
                 renamed_user_id: syncSubjectSession.id,
                 rename_verified: true,
                 removal_verified: true,
+                default_order_matches_openwebui: true,
                 hidden_locally_after_delete:
                     hiddenUser.exists_in_openwebui === false,
                 used_balance_before_reset: actualUsedBalanceBeforeReset,
@@ -1319,7 +1478,8 @@ async function main() {
                 },
             },
             api_checks: apiChecks,
-            screenshots,
+            ui_checks: chromiumChecks.users_page,
+            screenshots: chromiumChecks.screenshots,
         }
 
         const summaryPath = path.join(ARTIFACTS_DIR, 'summary.json')

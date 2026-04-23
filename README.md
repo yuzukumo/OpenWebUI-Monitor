@@ -8,26 +8,89 @@
 
 </div>
 
-A monitoring dashboard for OpenWebUI that tracks usage and manages user balances. Simply add a [function](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/openwebui_monitor.py) to OpenWebUI to view user activity and balances in a unified panel.
+A monitoring dashboard for OpenWebUI that tracks usage and manages user balances. Simply add the bundled [function](./resources/functions/openwebui_monitor.py) to OpenWebUI to view user activity and balances in a unified panel.
 
-> **Note**: If you are using OpenWebUI version 0.5.8 or above, please make sure to update the [function](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/openwebui_monitor.py) to the latest version.
+> **Note**: If you are using OpenWebUI 0.5.8 or above, make sure the installed [function](./resources/functions/openwebui_monitor.py) is kept in sync with this repository.
 
 > 💡 **Related Tool**: Auto-sync OpenAI & Claude model prices to your instance — [openwebui-monitor-sync](https://github.com/Yeraze/openwebui-monitor-sync) by [@Yeraze](https://github.com/Yeraze)
 
 ## Features
 
-- Set prices for each model in OpenWebUI;
-- Set balance for each user, deduct based on token consumption and model prices, with notifications at the end of each chat;
-- View user data and visualizations;
-- One-click test for all model availability.
+- Set prices for each model in OpenWebUI
+- Charge chat and image requests based on model pricing, with end-of-chat usage notifications
+- Handle newer and older OpenWebUI usage payload shapes, including `usage`, `info.usage`, and legacy token fields
+- Sync the authoritative user list from OpenWebUI by stable user `id`, so renames update in place and deleted users disappear automatically
+- Track both `used balance` and `remaining balance`, with an admin action to reset a user's used balance
+- Keep the default user-management order aligned with the current OpenWebUI user list while preserving manual table sorting
+- View user data and usage visualizations
+- One-click test for all model availability
+- Reproducible end-to-end validation with the official OpenWebUI slim image, PostgreSQL 18, and Chromium
 
 ## Deployment
 
-Supports one-click deployment on Vercel [![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FVariantConst%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=openwebui-monitor&env=OPENWEBUI_DOMAIN,OPENWEBUI_API_KEY,ACCESS_TOKEN,API_KEY) and Docker deployment. **See [Deployment Guide](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/tutorials/en/deployment_guide.md) for details. See [Deployment Guide](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/tutorials/en/deployment_guide.md) for details. See [Deployment Guide](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/tutorials/en/deployment_guide.md) for details.**
+Supports one-click deployment on Vercel [![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyuzukumo%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=openwebui-monitor&env=OPENWEBUI_DOMAIN,OPENWEBUI_API_KEY,ACCESS_TOKEN,API_KEY) and Docker deployment.
+
+See the [Deployment Guide](./resources/tutorials/en/deployment_guide.md) for detailed setup instructions.
+
+### Docker Quick Start
+
+This fork publishes its container image to GHCR:
+
+```text
+ghcr.io/yuzukumo/openwebui-monitor:latest
+```
+
+Example `docker-compose.yml`:
+
+```yaml
+services:
+  openwebui-monitor:
+    image: ghcr.io/yuzukumo/openwebui-monitor:latest
+    ports:
+      - "127.0.0.1:3003:3000"
+    environment:
+      - POSTGRES_HOST=${POSTGRES_HOST:-openwebui-monitor-db}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
+      - POSTGRES_DATABASE=${POSTGRES_DATABASE:-openwebui_monitor}
+      - OPENWEBUI_DOMAIN=${OPENWEBUI_DOMAIN:-http://open-webui:8080}
+      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+      - ACCESS_TOKEN=${ACCESS_TOKEN}
+      - API_KEY=${API_KEY}
+      - OPENWEBUI_USERS_SYNC_INTERVAL_MS=${OPENWEBUI_USERS_SYNC_INTERVAL_MS:-30000}
+    depends_on:
+      openwebui-monitor-db:
+        condition: service_healthy
+    restart: always
+
+  openwebui-monitor-db:
+    image: postgres:18-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
+      - POSTGRES_DB=${POSTGRES_DATABASE:-openwebui_monitor}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+
+volumes:
+  postgres_data:
+```
+
+> **PostgreSQL 18 note**: for fresh Postgres 18 deployments, mount `/var/lib/postgresql`, not `/var/lib/postgresql/data`.
 
 ## Updates
 
-For Vercel, sync fork and redeploy your project. For Docker, simply pull the latest image and restart the container:
+For this fork, every push triggers GitHub Actions to build and publish the latest GHCR image.
+
+- Vercel: sync your fork and redeploy
+- Docker: pull the latest image and restart the container
 
 ```bash
 sudo docker compose pull
@@ -49,6 +112,13 @@ sudo docker compose up -d
 
 | Variable Name                    | Description                                                                                                                                 | Default Value |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
+| POSTGRES_URL                     | PostgreSQL connection string. If set, it takes precedence over individual `POSTGRES_*` variables                                            | unset         |
+| DATABASE_URL                     | Alternative PostgreSQL connection string name, used if `POSTGRES_URL` is not set                                                           | unset         |
+| POSTGRES_HOST                    | PostgreSQL host                                                                                                                             | `db`          |
+| POSTGRES_PORT                    | PostgreSQL port                                                                                                                             | `5432`        |
+| POSTGRES_USER                    | PostgreSQL username                                                                                                                         | `postgres`    |
+| POSTGRES_PASSWORD                | PostgreSQL password                                                                                                                         | unset         |
+| POSTGRES_DATABASE                | PostgreSQL database name                                                                                                                    | `openwebui_monitor` |
 | DEFAULT_MODEL_INPUT_PRICE        | Default model input price, in USD per million tokens                                                                                        | `60`          |
 | DEFAULT_MODEL_OUTPUT_PRICE       | Default model output price, in USD per million tokens                                                                                       | `60`          |
 | DEFAULT_MODEL_PER_MSG_PRICE      | Default model price for each message, in USD                                                                                                | `-1`          |
@@ -59,6 +129,17 @@ sudo docker compose up -d
 ## Testing
 
 This repository includes a reproducible end-to-end test that boots PostgreSQL, the official OpenWebUI slim image, a mock OpenAI-compatible backend, and then validates the monitor with Chromium screenshots.
+
+The E2E flow currently verifies:
+
+- user sync from OpenWebUI by stable `id`
+- rename handling without duplicate local users
+- automatic removal of users deleted in OpenWebUI
+- default user order matching the OpenWebUI user list
+- used-balance accumulation and reset behavior
+- balance editing in the user page without reloading the list
+- records export and database export
+- monitor UI rendering for token, home, models, users, records, and panel pages
 
 ```bash
 pnpm e2e:install
@@ -73,7 +154,7 @@ Artifacts are written to `artifacts/e2e/`, including logs, screenshots, and `sum
 | ------------- | -------------------------------------------------------------------------------------------------------------- |
 | Api Endpoint  | Fill in your deployed OpenWebUI Monitor backend domain or IP address accessible within the OpenWebUI container |
 | Api Key       | Fill in the `API_KEY` environment variable set in the backend deployment                                       |
-| Language      | Message display language (en/zh)                                                                               |
+| Language      | Message display language (`en` / `zh` / `es`)                                                                  |
 
 ## FAQ
 
@@ -89,14 +170,26 @@ The principle is that this address should be accessible from within the OpenWebU
 
 Fill in your deployed OpenWebUI Monitor backend domain or IP address accessible within the OpenWebUI container. For example `http://[host local ip]:7878`, where `7878` is the default port for OpenWebUI Monitor.
 
-### 3. Why can't I see users in the user management page?
+### 3. What should I use for `OPENWEBUI_API_KEY`?
+
+Use an **admin** OpenWebUI credential that can call the users API.
+
+- An admin API key works
+- An admin JWT token also works
+
+If you create it from the OpenWebUI UI, use an admin account and make sure it can access the OpenWebUI users endpoints.
+
+### 4. Why can't I see users in the user management page?
 
 The monitor now refreshes the current OpenWebUI user list from `GET /api/v1/users/all` and matches users by stable OpenWebUI `id`, so renames update in place and users deleted in OpenWebUI disappear from the monitor automatically. If users still do not appear, check that `OPENWEBUI_API_KEY` is an admin credential that can access the OpenWebUI users API.
+
+### 5. What is the difference between `used balance` and `remaining balance`?
+
+- `used balance` is the cumulative amount already consumed by the user
+- `remaining balance` is the current balance still available for future requests
+
+Admins can reset a user's `used balance` to zero without changing the user's remaining balance.
 
 <h2>Gallery</h2>
 
 ![](https://github.com/user-attachments/assets/63f23bfd-f271-41e8-a71c-2016be1d501a)
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=VariantConst/OpenWebUI-Monitor&type=Date)](https://star-history.com/#VariantConst/OpenWebUI-Monitor&Date)

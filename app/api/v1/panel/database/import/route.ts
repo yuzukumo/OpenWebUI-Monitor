@@ -28,7 +28,7 @@ export async function POST(req: Request) {
                 for (const user of data.data.users) {
                     await query(
                         `INSERT INTO users (
-              id, email, name, role, balance, used_balance, created_at, deleted, exists_in_openwebui
+              id, email, name, role, balance, used_balance, openwebui_order, created_at, deleted, exists_in_openwebui
             ) VALUES (
               $1,
               $2,
@@ -36,9 +36,10 @@ export async function POST(req: Request) {
               $4,
               $5,
               COALESCE($6, 0),
-              COALESCE($7, CURRENT_TIMESTAMP),
-              COALESCE($8, FALSE),
-              COALESCE($9, TRUE)
+              $7,
+              COALESCE($8, CURRENT_TIMESTAMP),
+              COALESCE($9, FALSE),
+              COALESCE($10, TRUE)
             )`,
                         [
                             user.id,
@@ -47,6 +48,7 @@ export async function POST(req: Request) {
                             user.role,
                             user.balance,
                             user.used_balance ?? 0,
+                            user.openwebui_order ?? null,
                             user.created_at ?? null,
                             user.deleted ?? false,
                             user.exists_in_openwebui ?? true,

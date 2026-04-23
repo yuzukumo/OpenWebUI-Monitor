@@ -138,6 +138,7 @@ export async function ensureTablesExist() {
           role TEXT NOT NULL DEFAULT 'user',
           balance DECIMAL(16, 6) NOT NULL DEFAULT 0,
           used_balance DECIMAL(16, 4) NOT NULL DEFAULT 0,
+          openwebui_order INTEGER,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           deleted BOOLEAN DEFAULT FALSE,
           exists_in_openwebui BOOLEAN DEFAULT TRUE
@@ -208,6 +209,25 @@ export async function ensureTablesExist() {
             } catch (error) {
                 console.error(
                     'Error adding exists_in_openwebui column to users table:',
+                    error
+                )
+            }
+
+            try {
+                await query(`
+          DO $$ 
+          BEGIN 
+            BEGIN
+              ALTER TABLE users 
+              ADD COLUMN openwebui_order INTEGER;
+            EXCEPTION 
+              WHEN duplicate_column THEN NULL;
+            END;
+          END $$;
+        `)
+            } catch (error) {
+                console.error(
+                    'Error adding openwebui_order column to users table:',
                     error
                 )
             }

@@ -7,6 +7,7 @@ export interface User {
     role: string
     balance: number
     used_balance?: number
+    openwebui_order?: number | null
     deleted?: boolean
     exists_in_openwebui?: boolean
 }
@@ -121,6 +122,13 @@ async function ensureUserColumnsExist() {
           ADD COLUMN used_balance DECIMAL(16,4) DEFAULT 0;
       `,
         },
+        {
+            name: 'openwebui_order',
+            sql: `
+        ALTER TABLE users
+          ADD COLUMN openwebui_order INTEGER;
+      `,
+        },
     ]
 
     for (const column of requiredColumns) {
@@ -197,6 +205,7 @@ export async function ensureUserTableExists() {
         role TEXT NOT NULL,
         balance DECIMAL(16,4) NOT NULL,
         used_balance DECIMAL(16,4) NOT NULL DEFAULT 0,
+        openwebui_order INTEGER,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         deleted BOOLEAN DEFAULT FALSE,
         exists_in_openwebui BOOLEAN DEFAULT TRUE
@@ -301,7 +310,7 @@ export async function syncUsersFromOpenWebUI({
         const initBalance = process.env.INIT_BALANCE || '0'
 
         await withTransaction(async (client) => {
-            for (const user of remoteUsers) {
+            for (const [index, user] of remoteUsers.entries()) {
                 await query(
                     `
               INSERT INTO users (
@@ -311,16 +320,25 @@ export async function syncUsersFromOpenWebUI({
                 role,
                 balance,
                 used_balance,
-                exists_in_openwebui
+                exists_in_openwebui,
+                openwebui_order
               )
-              VALUES ($1, $2, $3, $4, $5, 0, TRUE)
+              VALUES ($1, $2, $3, $4, $5, 0, TRUE, $6)
               ON CONFLICT (id) DO UPDATE
               SET email = EXCLUDED.email,
                   name = EXCLUDED.name,
                   role = EXCLUDED.role,
-                  exists_in_openwebui = TRUE
+                  exists_in_openwebui = TRUE,
+                  openwebui_order = EXCLUDED.openwebui_order
             `,
-                    [user.id, user.email, user.name, user.role, initBalance],
+                    [
+                        user.id,
+                        user.email,
+                        user.name,
+                        user.role,
+                        initBalance,
+                        index,
+                    ],
                     client
                 )
             }
@@ -328,7 +346,8 @@ export async function syncUsersFromOpenWebUI({
             await query(
                 `
             UPDATE users
-               SET exists_in_openwebui = FALSE
+               SET exists_in_openwebui = FALSE,
+                   openwebui_order = NULL
              WHERE NOT (id = ANY($1::text[]))
           `,
                 [remoteUserIds],
@@ -462,7 +481,7 @@ export async function getUsers({
     )
     const total = parseInt(countResult.rows[0].count)
 
-    let orderClause = 'created_at DESC'
+    let orderClause = 'openwebui_order ASC NULLS LAST, created_at DESC'
     if (search) {
         const searchStartsWithIndex = queryParams.length + 1
         const searchContainsNameIndex = queryParams.length + 2
@@ -474,7 +493,9 @@ export async function getUsers({
         WHEN name ILIKE $${searchContainsNameIndex} THEN 2
         WHEN email ILIKE $${searchContainsEmailIndex} THEN 3
         ELSE 4
-      END`
+      END,
+      openwebui_order ASC NULLS LAST,
+      created_at DESC`
         queryParams.push(
             `${search.trim()}%`,
             `%${search.trim()}%`,
@@ -490,14 +511,16 @@ export async function getUsers({
             'created_at',
         ]
         if (allowedFields.includes(sortField)) {
-            orderClause = `${sortField} ${sortOrder === 'ascend' ? 'ASC' : 'DESC'}`
+            orderClause = `${sortField} ${
+                sortOrder === 'ascend' ? 'ASC' : 'DESC'
+            }, openwebui_order ASC NULLS LAST, created_at DESC`
         }
     }
 
     queryParams.push(pageSize, offset)
     const result = await query(
         `
-    SELECT id, email, name, role, balance, used_balance, deleted, exists_in_openwebui
+    SELECT id, email, name, role, balance, used_balance, openwebui_order, deleted, exists_in_openwebui
       FROM users
       ${whereClause}
       ORDER BY ${orderClause}
@@ -526,10 +549,10 @@ export async function getAllUsers(
         conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
     const result = await query(`
-    SELECT id, email, name, role, balance, used_balance, deleted, exists_in_openwebui
+    SELECT id, email, name, role, balance, used_balance, openwebui_order, deleted, exists_in_openwebui
       FROM users
       ${whereClause}
-      ORDER BY created_at DESC
+      ORDER BY openwebui_order ASC NULLS LAST, created_at DESC
   `)
 
     return result.rows

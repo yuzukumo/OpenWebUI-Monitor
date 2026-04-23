@@ -19,6 +19,11 @@ interface User {
     used_balance: number
 }
 
+type UsersSortInfo = {
+    field: string | null
+    order: 'ascend' | 'descend' | null
+}
+
 interface TFunction {
     (key: string): string
     (key: string, options: { name: string }): string
@@ -60,6 +65,36 @@ const TABLE_STYLES = `
 const formatBalance = (balance: number | string) => {
     const num = typeof balance === 'number' ? balance : Number(balance)
     return isFinite(num) ? num.toFixed(4) : '0.0000'
+}
+
+const sortUsersLocally = (users: User[], sortInfo: UsersSortInfo) => {
+    if (!sortInfo.field || !sortInfo.order) {
+        return users
+    }
+
+    const direction = sortInfo.order === 'ascend' ? 1 : -1
+
+    return [...users].sort((left, right) => {
+        switch (sortInfo.field) {
+            case 'balance':
+                return (
+                    (Number(left.balance) - Number(right.balance)) * direction
+                )
+            case 'used_balance':
+                return (
+                    (Number(left.used_balance) - Number(right.used_balance)) *
+                    direction
+                )
+            case 'name':
+                return left.name.localeCompare(right.name) * direction
+            case 'email':
+                return left.email.localeCompare(right.email) * direction
+            case 'role':
+                return left.role.localeCompare(right.role) * direction
+            default:
+                return 0
+        }
+    })
 }
 
 const UserDetailsModal = ({
@@ -183,10 +218,7 @@ export default function UsersPage() {
     const [editingKey, setEditingKey] = useState<string>('')
     const [resettingUserId, setResettingUserId] = useState<string | null>(null)
     const [selectedUser, setSelectedUser] = useState<User | null>(null)
-    const [sortInfo, setSortInfo] = useState<{
-        field: string | null
-        order: 'ascend' | 'descend' | null
-    }>({
+    const [sortInfo, setSortInfo] = useState<UsersSortInfo>({
         field: null,
         order: null,
     })
@@ -259,21 +291,35 @@ export default function UsersPage() {
                 )
             }
 
-            setUsers(
-                users.map((user) =>
-                    user.id === userId ? { ...user, balance: newBalance } : user
+            const updatedBalance = Number(data.balance)
+            const updatedUsedBalance = Number(data.used_balance)
+
+            setUsers((currentUsers) =>
+                sortUsersLocally(
+                    currentUsers.map((user) =>
+                        user.id === userId
+                            ? {
+                                  ...user,
+                                  balance: updatedBalance,
+                                  used_balance: updatedUsedBalance,
+                              }
+                            : user
+                    ),
+                    sortInfo
                 )
             )
             setSelectedUser((prevUser) =>
                 prevUser?.id === userId
-                    ? { ...prevUser, balance: newBalance }
+                    ? {
+                          ...prevUser,
+                          balance: updatedBalance,
+                          used_balance: updatedUsedBalance,
+                      }
                     : prevUser
             )
 
             toast.success(t('users.message.updateBalance.success'))
             setEditingKey('')
-
-            fetchUsers(currentPage)
         } catch (err) {
             console.error('Failed to update balance:', err)
             toast.error(
@@ -311,19 +357,34 @@ export default function UsersPage() {
                 )
             }
 
-            setUsers(
-                users.map((user) =>
-                    user.id === userId ? { ...user, used_balance: 0 } : user
+            const updatedBalance = Number(data.user.balance)
+            const updatedUsedBalance = Number(data.user.used_balance)
+
+            setUsers((currentUsers) =>
+                sortUsersLocally(
+                    currentUsers.map((user) =>
+                        user.id === userId
+                            ? {
+                                  ...user,
+                                  balance: updatedBalance,
+                                  used_balance: updatedUsedBalance,
+                              }
+                            : user
+                    ),
+                    sortInfo
                 )
             )
             setSelectedUser((prevUser) =>
                 prevUser?.id === userId
-                    ? { ...prevUser, used_balance: 0 }
+                    ? {
+                          ...prevUser,
+                          balance: updatedBalance,
+                          used_balance: updatedUsedBalance,
+                      }
                     : prevUser
             )
 
             toast.success(t('users.message.resetUsedBalance.success'))
-            fetchUsers(currentPage)
         } catch (err) {
             console.error('Failed to reset used balance:', err)
             toast.error(
