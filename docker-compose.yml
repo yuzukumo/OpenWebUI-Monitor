@@ -33,7 +33,7 @@ services:
             - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
             - POSTGRES_DB=${POSTGRES_DATABASE:-openwebui_monitor}
         volumes:
-            - postgres_data:/var/lib/postgresql/data
+            - postgres_data:/var/lib/postgresql
         healthcheck:
             test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
             interval: 5s
@@ -43,4 +43,4 @@ services:
 
 volumes:
     postgres_data:
-        name: openwebui-monitor-postgres-data
+        name: openwebui-monitor-data

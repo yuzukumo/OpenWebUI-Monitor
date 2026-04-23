@@ -5,6 +5,7 @@ node_modules
 npm-debug.log*
 pnpm-debug.log*
 .pnpm-store
+artifacts
 README.md
 .gitignore
 .dockerignore

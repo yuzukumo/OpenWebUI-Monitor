@@ -1,39 +1,60 @@
-# 使用 Node.js 官方镜像作为基础镜像
-FROM node:24-alpine
+FROM node:24-alpine AS base
 
-# 设置工作目录
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV PNPM_DISABLE_SELF_UPDATE_CHECK=true
+ENV PNPM_HOME=/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+
+RUN corepack enable
+
+FROM base AS build-deps
+
 WORKDIR /app
 
-# 安装必要的系统依赖
 RUN apk add --no-cache \
     python3 \
     make \
     g++ \
     gcc \
-    libc-dev \
+    libc-dev
+
+COPY package.json pnpm-lock.yaml ./
+
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+    pnpm install --frozen-lockfile --prefer-offline
+
+FROM build-deps AS builder
+
+WORKDIR /app
+
+COPY . .
+
+RUN pnpm build
+
+FROM node:24-alpine AS runner
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
+
+WORKDIR /app
+
+RUN apk add --no-cache \
+    curl \
     netcat-openbsd \
     postgresql-client
 
-# 全局安装 pnpm
-RUN npm install -g pnpm --registry=https://registry.npmmirror.com
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/locales ./locales
+COPY --from=builder /app/start.sh ./start.sh
 
-# 复制 package.json 和 pnpm-lock.yaml
-COPY package.json pnpm-lock.yaml ./
-
-# 安装依赖
-RUN pnpm install --no-frozen-lockfile --registry=https://registry.npmmirror.com
-
-# 复制项目文件
-COPY . .
-
-# 添加执行权限到启动脚本
 RUN chmod +x start.sh
 
-# 构建应用
-RUN pnpm build
-
-# 暴露端口
 EXPOSE 3000
 
-# 使用启动脚本
 CMD ["./start.sh"]

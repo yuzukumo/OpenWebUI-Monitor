@@ -1,25 +1,48 @@
 #!/bin/sh
 
-# 如果使用外部数据库，等待外部 PostgreSQL 服务启动
+set -eu
+
+POSTGRES_HOST="${POSTGRES_HOST:-db}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+POSTGRES_USER="${POSTGRES_USER:-postgres}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
+POSTGRES_DATABASE="${POSTGRES_DATABASE:-openwebui_monitor}"
+
 echo "Waiting for PostgreSQL to start..."
-while ! nc -z ${POSTGRES_HOST:-db} ${POSTGRES_PORT:-5432}; do
+while ! nc -z "$POSTGRES_HOST" "$POSTGRES_PORT"; do
   sleep 1
 done
 echo "PostgreSQL is up!"
 
-# 创建数据库（如果不存在）
 echo "Creating database if not exists..."
-PGPASSWORD=${POSTGRES_PASSWORD} psql -h ${POSTGRES_HOST:-db} -p ${POSTGRES_PORT:-5432} -U ${POSTGRES_USER:-postgres} -tc "SELECT 1 FROM pg_database WHERE datname = '${POSTGRES_DATABASE:-openwebui_monitor}'" | grep -q 1 || \
-PGPASSWORD=${POSTGRES_PASSWORD} psql -h ${POSTGRES_HOST:-db} -p ${POSTGRES_PORT:-5432} -U ${POSTGRES_USER:-postgres} -c "CREATE DATABASE ${POSTGRES_DATABASE:-openwebui_monitor}"
+if ! PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -tc "SELECT 1 FROM pg_database WHERE datname = '$POSTGRES_DATABASE'" | grep -q 1; then
+  PGPASSWORD="$POSTGRES_PASSWORD" psql -h "$POSTGRES_HOST" -p "$POSTGRES_PORT" -U "$POSTGRES_USER" -c "CREATE DATABASE $POSTGRES_DATABASE"
+fi
 echo "Database setup completed!"
 
-# 等待新创建的数据库准备就绪
-sleep 2
-
-# 初始化数据库表
-echo "Initializing database tables..."
-pnpm db:push
-
-# 启动应用
 echo "Starting application..."
-pnpm start 
+node server.js &
+SERVER_PID=$!
+
+cleanup() {
+  if kill -0 "$SERVER_PID" 2>/dev/null; then
+    kill -TERM "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID"
+  fi
+}
+
+trap cleanup INT TERM
+
+echo "Waiting for application to accept connections..."
+while ! nc -z 127.0.0.1 "${PORT:-3000}"; do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    wait "$SERVER_PID"
+  fi
+  sleep 1
+done
+
+echo "Initializing database tables..."
+curl --fail --silent --show-error "http://127.0.0.1:${PORT:-3000}/api/init" >/tmp/openwebui-monitor-init.json
+cat /tmp/openwebui-monitor-init.json
+
+wait "$SERVER_PID"

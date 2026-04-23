@@ -3,6 +3,7 @@
     "name": "openwebui-usage-monitor",
     "version": "0.3.8",
     "private": true,
+    "packageManager": "pnpm@10.32.1",
     "scripts": {
         "dev": "next dev",
         "build": "next build",
