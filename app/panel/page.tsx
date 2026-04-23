@@ -23,6 +23,7 @@ import {
     TableOutlined,
 } from '@ant-design/icons'
 import { Crown, Trophy } from 'lucide-react'
+import { formatMoney } from '@/lib/utils/money'
 
 interface ModelUsage {
     model_name: string
@@ -374,14 +375,14 @@ export default function PanelPage() {
                                         <p className="text-2xl font-bold text-primary">
                                             {loading
                                                 ? '-'
-                                                : `${t('common.currency')}${usageData.models
-                                                      .reduce(
+                                                : `${t('common.currency')}${formatMoney(
+                                                      usageData.models.reduce(
                                                           (sum, model) =>
                                                               sum +
                                                               model.total_cost,
                                                           0
                                                       )
-                                                      .toFixed(2)}`}
+                                                  )}`}
                                         </p>
                                     </div>
 
@@ -514,20 +515,20 @@ export default function PanelPage() {
                                                       ? t(
                                                             'panel.report.spentAmount',
                                                             {
-                                                                amount: usageData.users
-                                                                    .reduce(
-                                                                        (
-                                                                            prev,
-                                                                            current
-                                                                        ) =>
-                                                                            current.total_cost >
-                                                                            prev.total_cost
-                                                                                ? current
-                                                                                : prev
-                                                                    )
-                                                                    .total_cost.toFixed(
-                                                                        2
-                                                                    ),
+                                                                amount: formatMoney(
+                                                                    usageData.users
+                                                                        .reduce(
+                                                                            (
+                                                                                prev,
+                                                                                current
+                                                                            ) =>
+                                                                                current.total_cost >
+                                                                                prev.total_cost
+                                                                                    ? current
+                                                                                    : prev
+                                                                        )
+                                                                        .total_cost
+                                                                ),
                                                             }
                                                         )
                                                       : '-'}

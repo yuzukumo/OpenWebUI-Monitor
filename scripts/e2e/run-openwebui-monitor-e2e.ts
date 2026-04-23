@@ -110,7 +110,7 @@ const LOGS_DIR = path.join(ARTIFACTS_DIR, 'logs')
 const SCREENSHOTS_DIR = path.join(ARTIFACTS_DIR, 'screenshots')
 
 const OWU_IMAGE =
-    process.env.OWU_IMAGE || 'ghcr.io/open-webui/open-webui:v0.9.1-slim'
+    process.env.OWU_IMAGE || 'ghcr.io/open-webui/open-webui:latest-slim'
 const POSTGRES_IMAGE = process.env.E2E_POSTGRES_IMAGE || 'postgres:18-alpine'
 
 let MOCK_PORT = parseInt(process.env.MOCK_OPENAI_PORT || '18001', 10)
@@ -593,14 +593,77 @@ function normalizeOpenWebUIUsers(payload: unknown): OpenWebUIUser[] {
 async function fetchOpenWebUIUsers(
     adminToken: string
 ): Promise<OpenWebUIUser[]> {
-    const { data } = await requestJson<unknown>(
-        `${OWU_BASE_URL}/api/v1/users/all`,
-        {
-            headers: jsonHeaders(adminToken),
-        }
-    )
+    try {
+        const users: OpenWebUIUser[] = []
+        let page = 1
+        let total: number | null = null
 
-    return normalizeOpenWebUIUsers(data)
+        while (true) {
+            const response = await fetch(
+                `${OWU_BASE_URL}/api/v1/users?page=${page}&order_by=created_at&direction=asc`,
+                {
+                    headers: jsonHeaders(adminToken),
+                    cache: 'no-store',
+                }
+            )
+
+            if (!response.ok) {
+                throw new Error(
+                    `Failed to fetch OpenWebUI users page ${page}: ${response.status} ${await response.text()}`
+                )
+            }
+
+            const responseText = await response.text()
+            let data: { users?: unknown[]; total?: number } | null = null
+
+            try {
+                data = JSON.parse(responseText) as {
+                    users?: unknown[]
+                    total?: number
+                }
+            } catch (error) {
+                throw new Error(
+                    `Unexpected OpenWebUI users page payload: ${responseText}`
+                )
+            }
+
+            const pageUsers = normalizeOpenWebUIUsers(data)
+
+            if (total === null && typeof data.total === 'number') {
+                total = data.total
+            }
+
+            if (pageUsers.length === 0) {
+                break
+            }
+
+            users.push(...pageUsers)
+
+            if (
+                (total !== null && users.length >= total) ||
+                data.total === 0
+            ) {
+                break
+            }
+
+            page += 1
+        }
+
+        if (users.length > 0 || total === 0) {
+            return users
+        }
+    } catch (error) {
+        console.warn(
+            '[owu-e2e] Falling back to /api/v1/users/all for order verification:',
+            error
+        )
+    }
+
+    const { data } = await requestJson<unknown>(`${OWU_BASE_URL}/api/v1/users/all`, {
+        headers: jsonHeaders(adminToken),
+    })
+
+    return normalizeOpenWebUIUsers(data).reverse()
 }
 
 async function fetchMonitorUsers(): Promise<MonitorUsersResponse> {
@@ -772,9 +835,9 @@ async function injectChatUsage(user: {
                         role: 'assistant',
                         content: 'Hello from the injected chat usage payload.',
                         usage: {
-                            prompt_tokens: 12,
-                            completion_tokens: 15,
-                            total_tokens: 27,
+                            prompt_tokens: 1_000_000,
+                            completion_tokens: 1,
+                            total_tokens: 1_000_001,
                         },
                     },
                 ],
@@ -913,6 +976,34 @@ async function runMonitorApiChecks(): Promise<ApiCheckSummary> {
     }
 }
 
+async function updateMonitorModelPrice(update: {
+    id: string
+    input_price: number
+    output_price: number
+    per_msg_price: number
+}) {
+    await requestJson<Array<{ id: string }>>(`${MONITOR_BASE_URL}/api/v1/models`, {
+        headers: {
+            Authorization: `Bearer ${MONITOR_ACCESS_TOKEN}`,
+        },
+    })
+
+    const { data } = await requestJson<{
+        success: boolean
+        results?: Array<{ success: boolean }>
+    }>(`${MONITOR_BASE_URL}/api/v1/models/price`, {
+        method: 'POST',
+        headers: jsonHeaders(MONITOR_ACCESS_TOKEN),
+        body: JSON.stringify([update]),
+    })
+
+    assert(data?.success, `Failed to update model price for ${update.id}`)
+    assert(
+        data?.results?.[0]?.success,
+        `Model price update did not succeed for ${update.id}`
+    )
+}
+
 async function runChromiumChecks(
     packageVersion: string,
     adminUserId: string
@@ -923,7 +1014,7 @@ async function runChromiumChecks(
 
     const screenshots: Record<string, string> = {}
     let usersListRequestCount = 0
-    const updatedBalanceValue = '42.4242'
+    const updatedBalanceValue = '42.424242'
 
     try {
         const context = await browser.newContext({
@@ -1053,7 +1144,7 @@ async function runChromiumChecks(
         )
         assert(
             (await adminRow.locator('td').nth(1).textContent())?.includes(
-                '0.0000'
+                '0.000000'
             ),
             'Reset used balance was not reflected in the users table'
         )
@@ -1369,6 +1460,12 @@ async function main() {
         logStep(
             'Injecting chat-style and image-style usage payloads into the monitor outlet'
         )
+        await updateMonitorModelPrice({
+            id: 'gpt-4o-mini',
+            input_price: 0.000001,
+            output_price: 0.000001,
+            per_msg_price: -1,
+        })
         await injectChatUsage({
             id: adminSession.id,
             name: adminSession.name,
@@ -1394,6 +1491,10 @@ async function main() {
 
         assert(chatRecord, 'Missing chat usage record for gpt-4o-mini')
         assert(imageRecord, 'Missing image usage record for gpt-image-1')
+        assert(
+            Math.abs(Number(chatRecord.cost) - 0.000001) < 0.0000005,
+            `Expected low-cost chat record to retain micro precision, got ${chatRecord.cost}`
+        )
 
         const usersAfterUsage = await fetchMonitorUsers()
         const adminUserBeforeReset = findMonitorUser(

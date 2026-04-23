@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { CheckOutlined, InfoCircleOutlined } from '@ant-design/icons'
 import { Tooltip } from 'antd'
 import { toast } from 'sonner'
+import { formatMoney } from '@/lib/utils/money'
 
 interface EditableCellProps {
     value: number
@@ -39,7 +40,7 @@ export function EditableCell({
     isPerMsgPrice = false,
 }: EditableCellProps) {
     const numericValue = typeof value === 'number' ? value : Number(value)
-    const originalValue = numericValue >= 0 ? numericValue.toFixed(4) : ''
+    const originalValue = numericValue >= 0 ? formatMoney(numericValue) : ''
     const [inputValue, setInputValue] = useState(originalValue)
     const [isSaving, setIsSaving] = useState(false)
 
@@ -199,7 +200,7 @@ export function EditableCell({
                             </span>
                         ) : (
                             <>
-                                {numericValue.toFixed(4)}
+                                {formatMoney(numericValue)}
                                 {tooltipText && (
                                     <Tooltip title={tooltipText}>
                                         <InfoCircleOutlined className="ml-1 text-muted-foreground/60" />

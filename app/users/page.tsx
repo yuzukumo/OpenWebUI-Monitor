@@ -9,6 +9,7 @@ import { EditableCell } from '@/components/editable-cell'
 import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import { toast, Toaster } from 'sonner'
+import { formatMoney, MAX_BALANCE } from '@/lib/utils/money'
 
 interface User {
     id: string
@@ -63,8 +64,7 @@ const TABLE_STYLES = `
 `
 
 const formatBalance = (balance: number | string) => {
-    const num = typeof balance === 'number' ? balance : Number(balance)
-    return isFinite(num) ? num.toFixed(4) : '0.0000'
+    return formatMoney(balance)
 }
 
 const sortUsersLocally = (users: User[], sortInfo: UsersSortInfo) => {
@@ -460,7 +460,7 @@ export default function UsersPage() {
                                             errorMessage: t(
                                                 'error.invalidNumber'
                                             ),
-                                            maxValue: 999999.9999,
+                                            maxValue: MAX_BALANCE,
                                         })}
                                     />
                                 </div>
@@ -559,7 +559,7 @@ export default function UsersPage() {
                                     validateValue={(value) => ({
                                         isValid: isFinite(value),
                                         errorMessage: t('error.invalidNumber'),
-                                        maxValue: 999999.9999,
+                                        maxValue: MAX_BALANCE,
                                     })}
                                 />
                             </div>

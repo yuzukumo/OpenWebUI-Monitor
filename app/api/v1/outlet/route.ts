@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server'
 import { encode } from 'gpt-tokenizer/model/gpt-4'
 import type { PoolClient } from 'pg'
-import { query, withTransaction } from '@/lib/db/client'
-import { getModelInletCost } from '@/lib/utils/inlet-cost'
+import { ensureTablesExist, query, withTransaction } from '@/lib/db/client'
+import {
+    MAX_BALANCE_MICROS,
+    calculateTokenCostMicros,
+    decimalToMicros,
+    microsToDecimalString,
+    microsToNumber,
+    parseMicros,
+} from '@/lib/utils/money'
+import { getModelInletCostMicros } from '@/lib/utils/inlet-cost'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,9 +44,9 @@ interface UsagePayload {
 interface ModelPrice {
     id: string
     name: string
-    input_price: number
-    output_price: number
-    per_msg_price: number
+    input_price: number | string
+    output_price: number | string
+    per_msg_price: number | string
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -173,6 +181,8 @@ async function getModelPrice(
 
 export async function POST(req: Request) {
     try {
+        await ensureTablesExist()
+
         const data = await req.json()
         const modelId = data.body.model
         const userId = data.user.id
@@ -203,39 +213,55 @@ export async function POST(req: Request) {
                 throw new Error(`Fail to fetch price info of model ${modelId}`)
             }
 
-            let totalCost: number
+            let totalCostMicros: bigint
             if (outputTokens === 0) {
-                totalCost = 0
+                totalCostMicros = BigInt(0)
                 console.log('No charge for zero output tokens')
-            } else if (modelPrice.per_msg_price >= 0) {
-                totalCost = Number(modelPrice.per_msg_price)
+            } else if (Number(modelPrice.per_msg_price) >= 0) {
+                totalCostMicros = decimalToMicros(modelPrice.per_msg_price)
                 console.log(
-                    `Using fixed pricing: ${totalCost} (${modelPrice.per_msg_price} per message)`
+                    `Using fixed pricing: ${microsToDecimalString(
+                        totalCostMicros
+                    )} (${modelPrice.per_msg_price} per message)`
                 )
             } else {
-                const inputCost =
-                    (inputTokens / 1_000_000) * modelPrice.input_price
-                const outputCost =
-                    (outputTokens / 1_000_000) * modelPrice.output_price
-                totalCost = inputCost + outputCost
+                totalCostMicros = calculateTokenCostMicros({
+                    inputTokens,
+                    outputTokens,
+                    inputPrice: modelPrice.input_price,
+                    outputPrice: modelPrice.output_price,
+                })
             }
 
-            const inletCost = getModelInletCost(modelId)
-            const actualCost = totalCost - inletCost
+            const totalCost = microsToNumber(totalCostMicros)
+            const inletCostMicros = getModelInletCostMicros(modelId)
+            const actualCostMicros = totalCostMicros - inletCostMicros
 
             const userResult = await query(
                 `UPDATE users 
-           SET balance = LEAST(
-             balance - CAST($1 AS DECIMAL(16,4)),
-             999999.9999
-           ),
-               used_balance = GREATEST(
-                 COALESCE(used_balance, 0) + CAST($1 AS DECIMAL(16,4)),
+           SET balance_micros = LEAST(
+                 COALESCE(balance_micros, ROUND(COALESCE(balance, 0) * 1000000)::BIGINT) - $1::BIGINT,
+                 $3::BIGINT
+               ),
+               used_balance_micros = GREATEST(
+                 COALESCE(used_balance_micros, ROUND(COALESCE(used_balance, 0) * 1000000)::BIGINT) + $1::BIGINT,
                  0
-               )
+               ),
+               balance = LEAST(
+                 COALESCE(balance_micros, ROUND(COALESCE(balance, 0) * 1000000)::BIGINT) - $1::BIGINT,
+                 $3::BIGINT
+               )::NUMERIC / 1000000,
+               used_balance = GREATEST(
+                 COALESCE(used_balance_micros, ROUND(COALESCE(used_balance, 0) * 1000000)::BIGINT) + $1::BIGINT,
+                 0
+               )::NUMERIC / 1000000
            WHERE id = $2
-           RETURNING balance, used_balance`,
-                [actualCost, userId],
+           RETURNING balance, used_balance, balance_micros, used_balance_micros`,
+                [
+                    actualCostMicros.toString(),
+                    userId,
+                    MAX_BALANCE_MICROS.toString(),
+                ],
                 client
             )
 
@@ -243,10 +269,14 @@ export async function POST(req: Request) {
                 throw new Error('User does not exist')
             }
 
-            const newBalance = Number(userResult.rows[0].balance)
-            const usedBalance = Number(userResult.rows[0].used_balance)
+            const newBalanceMicros = parseMicros(userResult.rows[0].balance_micros)
+            const usedBalanceMicros = parseMicros(
+                userResult.rows[0].used_balance_micros
+            )
+            const newBalance = microsToNumber(newBalanceMicros)
+            const usedBalance = microsToNumber(usedBalanceMicros)
 
-            if (newBalance > 999999.9999) {
+            if (newBalanceMicros > MAX_BALANCE_MICROS) {
                 throw new Error('Balance exceeds maximum allowed value')
             }
 
@@ -254,16 +284,18 @@ export async function POST(req: Request) {
                 `INSERT INTO user_usage_records (
             user_id, nickname, model_name, 
             input_tokens, output_tokens, 
-            cost, balance_after
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            cost, cost_micros, balance_after, balance_after_micros
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
                 [
                     userId,
                     userName,
                     modelId,
                     inputTokens,
                     outputTokens,
-                    totalCost,
-                    newBalance,
+                    microsToDecimalString(totalCostMicros),
+                    totalCostMicros.toString(),
+                    microsToDecimalString(newBalanceMicros),
+                    newBalanceMicros.toString(),
                 ],
                 client
             )

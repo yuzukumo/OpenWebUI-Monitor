@@ -1,5 +1,10 @@
 import { attachDatabasePool } from '@vercel/functions'
 import { Pool, PoolClient } from 'pg'
+import {
+    MAX_BALANCE_MICROS,
+    decimalToMicros,
+    microsToDecimalString,
+} from '@/lib/utils/money'
 
 const isVercel = process.env.VERCEL === '1'
 
@@ -136,8 +141,10 @@ export async function ensureTablesExist() {
           email TEXT NOT NULL,
           name TEXT NOT NULL,
           role TEXT NOT NULL DEFAULT 'user',
-          balance DECIMAL(16, 6) NOT NULL DEFAULT 0,
-          used_balance DECIMAL(16, 4) NOT NULL DEFAULT 0,
+          balance NUMERIC(16, 6) NOT NULL DEFAULT 0,
+          used_balance NUMERIC(16, 6) NOT NULL DEFAULT 0,
+          balance_micros BIGINT NOT NULL DEFAULT 0,
+          used_balance_micros BIGINT NOT NULL DEFAULT 0,
           openwebui_order INTEGER,
           created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           deleted BOOLEAN DEFAULT FALSE,
@@ -145,6 +152,35 @@ export async function ensureTablesExist() {
         );
       `)
         } else {
+            await query(`
+        ALTER TABLE users 
+          ALTER COLUMN balance TYPE NUMERIC(16, 6);
+      `)
+
+            await query(`
+        ALTER TABLE users 
+          ALTER COLUMN used_balance TYPE NUMERIC(16, 6);
+      `).catch(() => null)
+
+            try {
+                await query(`
+          DO $$ 
+          BEGIN 
+            BEGIN
+              ALTER TABLE users 
+              ADD COLUMN created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+            EXCEPTION 
+              WHEN duplicate_column THEN NULL;
+            END;
+          END $$;
+        `)
+            } catch (error) {
+                console.error(
+                    'Error adding created_at column to users table:',
+                    error
+                )
+            }
+
             try {
                 await query(`
           DO $$ 
@@ -200,6 +236,44 @@ export async function ensureTablesExist() {
           BEGIN 
             BEGIN
               ALTER TABLE users 
+              ADD COLUMN balance_micros BIGINT DEFAULT 0;
+            EXCEPTION 
+              WHEN duplicate_column THEN NULL;
+            END;
+          END $$;
+        `)
+            } catch (error) {
+                console.error(
+                    'Error adding balance_micros column to users table:',
+                    error
+                )
+            }
+
+            try {
+                await query(`
+          DO $$ 
+          BEGIN 
+            BEGIN
+              ALTER TABLE users 
+              ADD COLUMN used_balance_micros BIGINT DEFAULT 0;
+            EXCEPTION 
+              WHEN duplicate_column THEN NULL;
+            END;
+          END $$;
+        `)
+            } catch (error) {
+                console.error(
+                    'Error adding used_balance_micros column to users table:',
+                    error
+                )
+            }
+
+            try {
+                await query(`
+          DO $$ 
+          BEGIN 
+            BEGIN
+              ALTER TABLE users 
               ADD COLUMN exists_in_openwebui BOOLEAN DEFAULT TRUE;
             EXCEPTION 
               WHEN duplicate_column THEN NULL;
@@ -232,6 +306,10 @@ export async function ensureTablesExist() {
                 )
             }
         }
+
+        await query(`
+      CREATE INDEX IF NOT EXISTS users_email_idx ON users(email);
+    `)
 
         const modelPricesTableExists = await query(`
       SELECT EXISTS (
@@ -313,11 +391,61 @@ export async function ensureTablesExist() {
           model_name VARCHAR(255) NOT NULL,
           input_tokens INTEGER NOT NULL,
           output_tokens INTEGER NOT NULL,
-          cost DECIMAL(10, 4) NOT NULL,
-          balance_after DECIMAL(10, 4) NOT NULL,
+          cost NUMERIC(16, 6) NOT NULL,
+          balance_after NUMERIC(16, 6) NOT NULL,
+          cost_micros BIGINT NOT NULL,
+          balance_after_micros BIGINT NOT NULL,
           FOREIGN KEY (user_id) REFERENCES users(id)
         );
       `)
+        } else {
+            await query(`
+        ALTER TABLE user_usage_records
+          ALTER COLUMN cost TYPE NUMERIC(16, 6);
+      `)
+
+            await query(`
+        ALTER TABLE user_usage_records
+          ALTER COLUMN balance_after TYPE NUMERIC(16, 6);
+      `)
+
+            try {
+                await query(`
+          DO $$ 
+          BEGIN 
+            BEGIN
+              ALTER TABLE user_usage_records
+              ADD COLUMN cost_micros BIGINT DEFAULT 0;
+            EXCEPTION 
+              WHEN duplicate_column THEN NULL;
+            END;
+          END $$;
+        `)
+            } catch (error) {
+                console.error(
+                    'Error adding cost_micros column to usage records table:',
+                    error
+                )
+            }
+
+            try {
+                await query(`
+          DO $$ 
+          BEGIN 
+            BEGIN
+              ALTER TABLE user_usage_records
+              ADD COLUMN balance_after_micros BIGINT DEFAULT 0;
+            EXCEPTION 
+              WHEN duplicate_column THEN NULL;
+            END;
+          END $$;
+        `)
+            } catch (error) {
+                console.error(
+                    'Error adding balance_after_micros column to usage records table:',
+                    error
+                )
+            }
         }
 
         if (didAddUsedBalanceColumn) {
@@ -325,7 +453,7 @@ export async function ensureTablesExist() {
         WITH usage_totals AS (
           SELECT
             user_id,
-            CAST(COALESCE(SUM(cost), 0) AS DECIMAL(16,4)) AS total_used_balance
+            CAST(COALESCE(SUM(cost), 0) AS NUMERIC(16,6)) AS total_used_balance
           FROM user_usage_records
           GROUP BY user_id
         )
@@ -335,6 +463,27 @@ export async function ensureTablesExist() {
          WHERE u.id = usage_totals.user_id;
       `)
         }
+
+        await query(`
+      UPDATE user_usage_records
+         SET cost_micros = ROUND(COALESCE(cost, 0) * 1000000)::BIGINT,
+             balance_after_micros = ROUND(COALESCE(balance_after, 0) * 1000000)::BIGINT,
+             cost = ROUND(COALESCE(cost, 0)::NUMERIC, 6),
+             balance_after = ROUND(COALESCE(balance_after, 0)::NUMERIC, 6);
+    `).catch((error) => {
+            console.error(
+                'Error backfilling usage record micros precision columns:',
+                error
+            )
+        })
+
+        await query(`
+      UPDATE users
+         SET balance_micros = ROUND(COALESCE(balance, 0) * 1000000)::BIGINT,
+             used_balance_micros = ROUND(COALESCE(used_balance, 0) * 1000000)::BIGINT,
+             balance = ROUND(COALESCE(balance, 0)::NUMERIC, 6),
+             used_balance = ROUND(COALESCE(used_balance, 0)::NUMERIC, 6);
+    `)
 
         console.log('Database tables initialized successfully')
     } catch (error) {
@@ -500,12 +649,19 @@ export async function updateModelPrice(
 
 export async function updateUserBalance(userId: string, balance: number) {
     try {
+        const balanceMicros = decimalToMicros(balance)
+
+        if (balanceMicros > MAX_BALANCE_MICROS) {
+            throw new Error('Balance exceeds maximum allowed value')
+        }
+
         const result = await query(
             `UPDATE users
-       SET balance = $2
+       SET balance = CAST($2 AS NUMERIC(16,6)),
+           balance_micros = $3::BIGINT
        WHERE id = $1
        RETURNING id, email, balance, used_balance`,
-            [userId, balance]
+            [userId, microsToDecimalString(balanceMicros), balanceMicros.toString()]
         )
 
         return result.rows[0]

@@ -1,4 +1,10 @@
 import { query, withTransaction } from './client'
+import {
+    MAX_BALANCE,
+    MAX_BALANCE_MICROS,
+    decimalToMicros,
+    microsToDecimalString,
+} from '@/lib/utils/money'
 
 export interface User {
     id: string
@@ -17,6 +23,11 @@ interface OpenWebUIUser {
     email: string
     name: string
     role: string
+}
+
+interface OpenWebUIUsersPage {
+    users: OpenWebUIUser[]
+    total: number | null
 }
 
 interface SyncUsersOptions {
@@ -91,6 +102,117 @@ function normalizeOpenWebUIUsers(payload: unknown): OpenWebUIUser[] {
         .filter((user): user is OpenWebUIUser => user !== null)
 }
 
+function normalizeOpenWebUIUsersPage(payload: unknown): OpenWebUIUsersPage {
+    if (Array.isArray(payload)) {
+        return {
+            users: normalizeOpenWebUIUsers(payload),
+            total: payload.length,
+        }
+    }
+
+    if (isRecord(payload)) {
+        const users = normalizeOpenWebUIUsers(payload)
+        const total =
+            typeof payload.total === 'number' && Number.isFinite(payload.total)
+                ? payload.total
+                : null
+
+        return {
+            users,
+            total,
+        }
+    }
+
+    throw new Error('Unexpected OpenWebUI users response structure')
+}
+
+async function fetchOpenWebUIUsersInAdminOrder(
+    openWebUIDomain: string,
+    openWebUIApiKey: string
+) {
+    const headers = {
+        Authorization: `Bearer ${openWebUIApiKey}`,
+        Accept: 'application/json',
+    }
+
+    try {
+        const users: OpenWebUIUser[] = []
+        let page = 1
+        let total: number | null = null
+
+        while (true) {
+            const response = await fetch(
+                `${openWebUIDomain.replace(
+                    /\/+$/,
+                    ''
+                )}/api/v1/users?page=${page}&order_by=created_at&direction=asc`,
+                {
+                    headers,
+                    cache: 'no-store',
+                }
+            )
+
+            if (!response.ok) {
+                const responseText = await response.text()
+                throw new Error(
+                    `Failed to fetch OpenWebUI users page ${page}: ${response.status} ${response.statusText} ${responseText}`
+                )
+            }
+
+            const parsedPage = normalizeOpenWebUIUsersPage(
+                await response.json()
+            )
+
+            if (total === null) {
+                total = parsedPage.total
+            }
+
+            if (parsedPage.users.length === 0) {
+                break
+            }
+
+            users.push(...parsedPage.users)
+
+            if (
+                (total !== null && users.length >= total) ||
+                parsedPage.total === 0
+            ) {
+                break
+            }
+
+            page += 1
+        }
+
+        if (users.length > 0 || total === 0) {
+            return users
+        }
+    } catch (error) {
+        console.warn(
+            'Falling back to /api/v1/users/all for OpenWebUI user sync order:',
+            error
+        )
+    }
+
+    const response = await fetch(
+        `${openWebUIDomain.replace(/\/+$/, '')}/api/v1/users/all`,
+        {
+            headers,
+            cache: 'no-store',
+        }
+    )
+
+    if (!response.ok) {
+        const responseText = await response.text()
+        throw new Error(
+            `Failed to fetch OpenWebUI users: ${response.status} ${response.statusText} ${responseText}`
+        )
+    }
+
+    // `/api/v1/users/all` follows the backend default order, which is
+    // typically the reverse of the admin UI's default created_at ascending view.
+    return normalizeOpenWebUIUsers(await response.json()).reverse()
+}
+
 async function ensureUserColumnsExist() {
     let didAddUsedBalanceColumn = false
     const requiredColumns = [
@@ -119,7 +241,21 @@ async function ensureUserColumnsExist() {
             name: 'used_balance',
             sql: `
         ALTER TABLE users
-          ADD COLUMN used_balance DECIMAL(16,4) DEFAULT 0;
+          ADD COLUMN used_balance NUMERIC(16,6) DEFAULT 0;
+      `,
+        },
+        {
+            name: 'balance_micros',
+            sql: `
+        ALTER TABLE users
+          ADD COLUMN balance_micros BIGINT DEFAULT 0;
+      `,
+        },
+        {
+            name: 'used_balance_micros',
+            sql: `
+        ALTER TABLE users
+          ADD COLUMN used_balance_micros BIGINT DEFAULT 0;
       `,
         },
         {
@@ -163,7 +299,7 @@ async function ensureUserColumnsExist() {
           WITH usage_totals AS (
             SELECT
               user_id,
-              CAST(COALESCE(SUM(cost), 0) AS DECIMAL(16,4)) AS total_used_balance
+              CAST(COALESCE(SUM(cost), 0) AS NUMERIC(16,6)) AS total_used_balance
             FROM user_usage_records
             GROUP BY user_id
           )
@@ -187,12 +323,12 @@ export async function ensureUserTableExists() {
     if (tableExists.rows[0].exists) {
         await query(`
       ALTER TABLE users 
-        ALTER COLUMN balance TYPE DECIMAL(16,4);
+        ALTER COLUMN balance TYPE NUMERIC(16,6);
     `)
 
         await query(`
       ALTER TABLE users
-        ALTER COLUMN used_balance TYPE DECIMAL(16,4);
+        ALTER COLUMN used_balance TYPE NUMERIC(16,6);
     `).catch(() => null)
 
         await ensureUserColumnsExist()
@@ -203,8 +339,10 @@ export async function ensureUserTableExists() {
         email TEXT NOT NULL,
         name TEXT NOT NULL,
         role TEXT NOT NULL,
-        balance DECIMAL(16,4) NOT NULL,
-        used_balance DECIMAL(16,4) NOT NULL DEFAULT 0,
+        balance NUMERIC(16,6) NOT NULL,
+        used_balance NUMERIC(16,6) NOT NULL DEFAULT 0,
+        balance_micros BIGINT NOT NULL DEFAULT 0,
+        used_balance_micros BIGINT NOT NULL DEFAULT 0,
         openwebui_order INTEGER,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
         deleted BOOLEAN DEFAULT FALSE,
@@ -216,10 +354,23 @@ export async function ensureUserTableExists() {
       CREATE INDEX IF NOT EXISTS users_email_idx ON users(email);
     `)
     }
+
+    await query(`
+    CREATE INDEX IF NOT EXISTS users_email_idx ON users(email);
+  `)
+
+    await query(`
+    UPDATE users
+       SET balance_micros = ROUND(COALESCE(balance, 0) * 1000000)::BIGINT,
+           used_balance_micros = ROUND(COALESCE(used_balance, 0) * 1000000)::BIGINT,
+           balance = ROUND(COALESCE(balance, 0)::NUMERIC, 6),
+           used_balance = ROUND(COALESCE(used_balance, 0)::NUMERIC, 6);
+  `)
 }
 
 export async function getOrCreateUser(userData: User) {
     await ensureUserTableExists()
+    const initBalanceMicros = decimalToMicros(process.env.INIT_BALANCE || '0')
 
     const result = await query(
         `
@@ -229,10 +380,12 @@ export async function getOrCreateUser(userData: User) {
       name,
       role,
       balance,
+      balance_micros,
       used_balance,
+      used_balance_micros,
       exists_in_openwebui
     )
-      VALUES ($1, $2, $3, $4, $5, 0, TRUE)
+      VALUES ($1, $2, $3, $4, $5, $6, 0, 0, TRUE)
       ON CONFLICT (id) DO UPDATE
       SET email = EXCLUDED.email,
           name = EXCLUDED.name,
@@ -244,7 +397,8 @@ export async function getOrCreateUser(userData: User) {
             userData.email,
             userData.name,
             userData.role || 'user',
-            process.env.INIT_BALANCE || '0',
+            microsToDecimalString(initBalanceMicros),
+            initBalanceMicros.toString(),
         ]
     )
 
@@ -287,27 +441,13 @@ export async function syncUsersFromOpenWebUI({
     }
 
     usersSyncPromise = (async () => {
-        const response = await fetch(
-            `${openWebUIDomain.replace(/\/+$/, '')}/api/v1/users/all`,
-            {
-                headers: {
-                    Authorization: `Bearer ${openWebUIApiKey}`,
-                    Accept: 'application/json',
-                },
-                cache: 'no-store',
-            }
+        const remoteUsers = await fetchOpenWebUIUsersInAdminOrder(
+            openWebUIDomain,
+            openWebUIApiKey
         )
-
-        if (!response.ok) {
-            const responseText = await response.text()
-            throw new Error(
-                `Failed to fetch OpenWebUI users: ${response.status} ${response.statusText} ${responseText}`
-            )
-        }
-
-        const remoteUsers = normalizeOpenWebUIUsers(await response.json())
         const remoteUserIds = remoteUsers.map((user) => user.id)
         const initBalance = process.env.INIT_BALANCE || '0'
+        const initBalanceMicros = decimalToMicros(initBalance)
 
         await withTransaction(async (client) => {
             for (const [index, user] of remoteUsers.entries()) {
@@ -319,11 +459,13 @@ export async function syncUsersFromOpenWebUI({
                 name,
                 role,
                 balance,
+                balance_micros,
                 used_balance,
+                used_balance_micros,
                 exists_in_openwebui,
                 openwebui_order
               )
-              VALUES ($1, $2, $3, $4, $5, 0, TRUE, $6)
+              VALUES ($1, $2, $3, $4, $5, $6, 0, 0, TRUE, $7)
               ON CONFLICT (id) DO UPDATE
               SET email = EXCLUDED.email,
                   name = EXCLUDED.name,
@@ -336,7 +478,8 @@ export async function syncUsersFromOpenWebUI({
                         user.email,
                         user.name,
                         user.role,
-                        initBalance,
+                        microsToDecimalString(initBalanceMicros),
+                        initBalanceMicros.toString(),
                         index,
                     ],
                     client
@@ -373,11 +516,12 @@ export async function syncUsersFromOpenWebUI({
 
 export async function updateUserBalance(
     userId: string,
-    cost: number
+    balance: number
 ): Promise<number> {
     await ensureUserTableExists()
+    const balanceMicros = decimalToMicros(balance)
 
-    if (cost > 999999.9999) {
+    if (balanceMicros > MAX_BALANCE_MICROS) {
         throw new Error('Balance exceeds maximum allowed value')
     }
 
@@ -385,12 +529,22 @@ export async function updateUserBalance(
         `
     UPDATE users 
       SET balance = LEAST(
-        CAST($2 AS DECIMAL(16,4)),
-        999999.9999
-      )
+        CAST($2 AS NUMERIC(16,6)),
+        CAST($3 AS NUMERIC(16,6))
+      ),
+          balance_micros = LEAST(
+            $4::BIGINT,
+            $5::BIGINT
+          )
       WHERE id = $1
       RETURNING balance`,
-        [userId, cost]
+        [
+            userId,
+            microsToDecimalString(balanceMicros),
+            MAX_BALANCE.toFixed(6),
+            balanceMicros.toString(),
+            MAX_BALANCE_MICROS.toString(),
+        ]
     )
 
     if (result.rows.length === 0) {
@@ -406,7 +560,8 @@ export async function resetUserUsedBalance(userId: string) {
     const result = await query(
         `
     UPDATE users
-       SET used_balance = 0
+       SET used_balance = 0,
+           used_balance_micros = 0
      WHERE id = $1
      RETURNING id, email, name, role, balance, used_balance
   `,

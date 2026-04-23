@@ -86,7 +86,7 @@ class Filter:
 
             self.outage = response_data.get("balance", 0) <= 0
             if self.outage:
-                raise Exception(f"余额不足: 当前余额 `{response_data['balance']:.4f}`")
+                raise Exception(f"余额不足: 当前余额 `{response_data['balance']:.6f}`")
 
             return body
 

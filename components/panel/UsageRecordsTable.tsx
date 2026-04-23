@@ -6,6 +6,7 @@ import type { FilterValue } from 'antd/es/table/interface'
 import type { SorterResult } from 'antd/es/table/interface'
 import dayjs from '@/lib/dayjs'
 import { useTranslation } from 'react-i18next'
+import { formatMoney } from '@/lib/utils/money'
 interface UsageRecord {
     id: number
     nickname: string
@@ -58,11 +59,11 @@ const MobileCard = ({
                 </div>
                 <div className="text-right">
                     <div className="font-medium text-primary">
-                        ¥{Number(record.cost).toFixed(4)}
+                        ¥{formatMoney(record.cost)}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                         {t('panel.usageDetails.table.balance')}: ¥
-                        {Number(record.balance_after).toFixed(4)}
+                        {formatMoney(record.balance_after)}
                     </div>
                 </div>
             </div>
@@ -164,7 +165,7 @@ export default function UsageRecordsTable({
             width: 100,
             sorter: true,
             render: (_: unknown, record: UsageRecord) =>
-                `${t('common.currency')}${Number(record.cost).toFixed(4)}`,
+                `${t('common.currency')}${formatMoney(record.cost)}`,
         },
         {
             title: t('panel.usageDetails.table.balance'),
@@ -173,7 +174,7 @@ export default function UsageRecordsTable({
             width: 100,
             sorter: true,
             render: (_: unknown, record: UsageRecord) =>
-                `${t('common.currency')}${Number(record.balance_after).toFixed(2)}`,
+                `${t('common.currency')}${formatMoney(record.balance_after)}`,
         },
     ]
 

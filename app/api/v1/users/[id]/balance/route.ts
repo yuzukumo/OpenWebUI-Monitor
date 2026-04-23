@@ -1,6 +1,11 @@
 import { query } from '@/lib/db/client'
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
+import {
+    MAX_BALANCE_MICROS,
+    decimalToMicros,
+    microsToDecimalString,
+} from '@/lib/utils/money'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,12 +31,26 @@ export async function PUT(
             )
         }
 
+        const balanceMicros = decimalToMicros(balance)
+
+        if (balanceMicros > MAX_BALANCE_MICROS) {
+            return NextResponse.json(
+                { error: 'Balance exceeds maximum allowed value' },
+                { status: 400 }
+            )
+        }
+
         const result = await query(
             `UPDATE users
-       SET balance = $1
-       WHERE id = $2
+       SET balance = CAST($1 AS NUMERIC(16,6)),
+           balance_micros = $2::BIGINT
+       WHERE id = $3
        RETURNING id, email, balance, used_balance`,
-            [balance, userId]
+            [
+                microsToDecimalString(balanceMicros),
+                balanceMicros.toString(),
+                userId,
+            ]
         )
 
         console.log(`Update result:`, result)

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { getOrCreateUser } from '@/lib/db/users'
 import { query } from '@/lib/db/client'
-import { getModelInletCost } from '@/lib/utils/inlet-cost'
+import { MAX_BALANCE_MICROS, microsToNumber } from '@/lib/utils/money'
+import { getModelInletCostMicros } from '@/lib/utils/inlet-cost'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,22 +12,34 @@ export async function POST(req: Request) {
         const user = await getOrCreateUser(data.user)
         const modelId = data.body?.model
 
-        const inletCost = getModelInletCost(modelId)
+        const inletCostMicros = getModelInletCostMicros(modelId)
 
-        if (inletCost > 0) {
+        if (inletCostMicros > BigInt(0)) {
             const userResult = await query(
                 `UPDATE users 
-         SET balance = LEAST(
-           balance - CAST($1 AS DECIMAL(16,4)),
-           999999.9999
-         ),
-             used_balance = GREATEST(
-               COALESCE(used_balance, 0) + CAST($1 AS DECIMAL(16,4)),
+         SET balance_micros = LEAST(
+               COALESCE(balance_micros, ROUND(COALESCE(balance, 0) * 1000000)::BIGINT) - $1::BIGINT,
+               $3::BIGINT
+             ),
+             used_balance_micros = GREATEST(
+               COALESCE(used_balance_micros, ROUND(COALESCE(used_balance, 0) * 1000000)::BIGINT) + $1::BIGINT,
                0
-             )
+             ),
+             balance = LEAST(
+               COALESCE(balance_micros, ROUND(COALESCE(balance, 0) * 1000000)::BIGINT) - $1::BIGINT,
+               $3::BIGINT
+             )::NUMERIC / 1000000,
+             used_balance = GREATEST(
+               COALESCE(used_balance_micros, ROUND(COALESCE(used_balance, 0) * 1000000)::BIGINT) + $1::BIGINT,
+               0
+             )::NUMERIC / 1000000
          WHERE id = $2
-         RETURNING balance, used_balance`,
-                [inletCost, user.id]
+         RETURNING balance, used_balance, balance_micros, used_balance_micros`,
+                [
+                    inletCostMicros.toString(),
+                    user.id,
+                    MAX_BALANCE_MICROS.toString(),
+                ]
             )
 
             if (userResult.rows.length === 0) {
@@ -35,9 +48,11 @@ export async function POST(req: Request) {
 
             return NextResponse.json({
                 success: true,
-                balance: Number(userResult.rows[0].balance),
-                used_balance: Number(userResult.rows[0].used_balance),
-                inlet_cost: inletCost,
+                balance: microsToNumber(userResult.rows[0].balance_micros),
+                used_balance: microsToNumber(
+                    userResult.rows[0].used_balance_micros
+                ),
+                inlet_cost: microsToNumber(inletCostMicros),
                 message: 'Request successful',
             })
         }

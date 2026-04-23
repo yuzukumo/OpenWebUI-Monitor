@@ -22,7 +22,7 @@ export async function GET(req: Request) {
         )
 
         const exportData = {
-            version: '1.2',
+            version: '1.3',
             timestamp: new Date().toISOString(),
             data: {
                 users: users.rows,

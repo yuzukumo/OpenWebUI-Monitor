@@ -1,6 +1,7 @@
 import { ensureTablesExist, query, withTransaction } from '@/lib/db/client'
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
+import { getMoneyAndMicros } from '@/lib/utils/money'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,28 +27,41 @@ export async function POST(req: Request) {
 
             if (data.data.users?.length) {
                 for (const user of data.data.users) {
+                    const balance = getMoneyAndMicros(
+                        user.balance,
+                        user.balance_micros
+                    )
+                    const usedBalance = getMoneyAndMicros(
+                        user.used_balance ?? 0,
+                        user.used_balance_micros
+                    )
+
                     await query(
                         `INSERT INTO users (
-              id, email, name, role, balance, used_balance, openwebui_order, created_at, deleted, exists_in_openwebui
+              id, email, name, role, balance, balance_micros, used_balance, used_balance_micros, openwebui_order, created_at, deleted, exists_in_openwebui
             ) VALUES (
               $1,
               $2,
               $3,
               $4,
-              $5,
-              COALESCE($6, 0),
-              $7,
-              COALESCE($8, CURRENT_TIMESTAMP),
-              COALESCE($9, FALSE),
-              COALESCE($10, TRUE)
+              CAST($5 AS NUMERIC(16,6)),
+              COALESCE($6::BIGINT, 0),
+              CAST($7 AS NUMERIC(16,6)),
+              COALESCE($8::BIGINT, 0),
+              $9,
+              COALESCE($10, CURRENT_TIMESTAMP),
+              COALESCE($11, FALSE),
+              COALESCE($12, TRUE)
             )`,
                         [
                             user.id,
                             user.email,
                             user.name,
                             user.role,
-                            user.balance,
-                            user.used_balance ?? 0,
+                            balance.decimal,
+                            balance.micros.toString(),
+                            usedBalance.decimal,
+                            usedBalance.micros.toString(),
                             user.openwebui_order ?? null,
                             user.created_at ?? null,
                             user.deleted ?? false,
@@ -80,11 +94,31 @@ export async function POST(req: Request) {
 
             if (data.data.user_usage_records?.length) {
                 for (const record of data.data.user_usage_records) {
+                    const cost = getMoneyAndMicros(
+                        record.cost,
+                        record.cost_micros
+                    )
+                    const balanceAfter = getMoneyAndMicros(
+                        record.balance_after,
+                        record.balance_after_micros
+                    )
+
                     await query(
                         `INSERT INTO user_usage_records (
               user_id, nickname, use_time, model_name, 
-              input_tokens, output_tokens, cost, balance_after
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              input_tokens, output_tokens, cost, cost_micros, balance_after, balance_after_micros
+            ) VALUES (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              CAST($7 AS NUMERIC(16,6)),
+              $8::BIGINT,
+              CAST($9 AS NUMERIC(16,6)),
+              $10::BIGINT
+            )`,
                         [
                             record.user_id,
                             record.nickname,
@@ -92,8 +126,10 @@ export async function POST(req: Request) {
                             record.model_name,
                             record.input_tokens,
                             record.output_tokens,
-                            record.cost,
-                            record.balance_after,
+                            cost.decimal,
+                            cost.micros.toString(),
+                            balanceAfter.decimal,
+                            balanceAfter.micros.toString(),
                         ],
                         client
                     )

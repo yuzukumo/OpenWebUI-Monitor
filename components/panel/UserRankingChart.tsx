@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { BarChartOutlined } from '@ant-design/icons'
 import { Card as ShadcnCard } from '@/components/ui/card'
 import { motion } from 'framer-motion'
+import { formatMoney } from '@/lib/utils/money'
 
 interface UserUsage {
     nickname: string
@@ -113,7 +114,7 @@ const getBarOption = (
                 fontSize: 12,
                 formatter: (value: number) => {
                     if (metric === 'cost') {
-                        return `¥${value.toFixed(1)}`
+                        return `¥${formatMoney(value)}`
                     }
                     return `${value}次`
                 },
@@ -189,7 +190,7 @@ const getBarOption = (
                     position: 'top',
                     formatter: (params: any) => {
                         return metric === 'cost'
-                            ? `${params.value.toFixed(2)}`
+                            ? `${formatMoney(params.value)}`
                             : `${params.value}`
                     },
                     fontSize: 11,

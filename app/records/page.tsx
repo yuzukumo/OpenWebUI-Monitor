@@ -17,6 +17,7 @@ import { motion } from 'framer-motion'
 import { toast, Toaster } from 'sonner'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { formatMoney } from '@/lib/utils/money'
 
 const { RangePicker } = DatePicker
 
@@ -112,7 +113,7 @@ export default function RecordsPage() {
             render: (value) => (
                 <div className="font-medium text-primary">
                     {t('common.currency')}
-                    {Number(value).toFixed(4)}
+                    {formatMoney(value)}
                 </div>
             ),
             sorter: true,
@@ -126,7 +127,7 @@ export default function RecordsPage() {
             render: (value) => (
                 <div className="font-medium">
                     {t('common.currency')}
-                    {Number(value).toFixed(4)}
+                    {formatMoney(value)}
                 </div>
             ),
             sorter: true,

@@ -11,6 +11,7 @@ import { MetricToggle } from '@/components/ui/metric-toggle'
 import { useTranslation } from 'react-i18next'
 import { PieChartOutlined } from '@ant-design/icons'
 import { motion } from 'framer-motion'
+import { formatMoney } from '@/lib/utils/money'
 
 interface ModelUsage {
     model_name: string
@@ -98,7 +99,7 @@ const getPieOption = (
               <span class="font-mono text-sm font-medium text-gray-900">
                 ${
                     metric === 'cost'
-                        ? `${t('common.currency')}${params.value.toFixed(4)}`
+                        ? `${t('common.currency')}${formatMoney(params.value)}`
                         : `${params.value} ${t('common.count')}`
                 }
               </span>
@@ -161,7 +162,7 @@ const getPieOption = (
                             `{name|${params.name}}`,
                             `{value|${
                                 metric === 'cost'
-                                    ? `${t('common.currency')}${params.value.toFixed(4)}`
+                                    ? `${t('common.currency')}${formatMoney(params.value)}`
                                     : `${params.value} ${t('common.count')}`
                             }}`,
                             `{per|${percentage}%}`,
@@ -237,9 +238,7 @@ const getPieOption = (
                 style: {
                     text:
                         metric === 'cost'
-                            ? `${t('common.total')}\n${t('common.currency')}${total.toFixed(
-                                  2
-                              )}`
+                            ? `${t('common.total')}\n${t('common.currency')}${formatMoney(total)}`
                             : `${t('common.total')}\n${total}${t('common.count')}`,
                     textAlign: 'center',
                     fontSize: 15,

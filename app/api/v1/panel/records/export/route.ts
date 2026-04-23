@@ -1,6 +1,7 @@
 import { query } from '@/lib/db/client'
 import { NextResponse } from 'next/server'
 import { verifyApiToken } from '@/lib/auth'
+import { formatMoney } from '@/lib/utils/money'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,8 +40,8 @@ export async function GET(req: Request) {
             record.model_name,
             record.input_tokens,
             record.output_tokens,
-            Number(record.cost).toFixed(4),
-            Number(record.balance_after).toFixed(4),
+            formatMoney(record.cost),
+            formatMoney(record.balance_after),
         ])
 
         const csvContent = [
