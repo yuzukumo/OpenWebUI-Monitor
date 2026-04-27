@@ -81,12 +81,52 @@ class Filter:
         text = TRANSLATIONS[lang].get(key, TRANSLATIONS["en"][key])
         return text.format(**kwargs) if kwargs else text
 
+    def _sanitize_for_monitor(self, value, key: Optional[str] = None):
+        if isinstance(value, dict):
+            if value.get("type") == "image_url":
+                item = dict(value)
+                image_url = item.get("image_url")
+                if isinstance(image_url, dict):
+                    item["image_url"] = {
+                        **image_url,
+                        "url": "[image omitted for billing]",
+                    }
+                return item
+
+            sanitized = {}
+            for child_key, child_value in value.items():
+                sanitized[child_key] = self._sanitize_for_monitor(
+                    child_value, child_key
+                )
+            return sanitized
+
+        if isinstance(value, list):
+            return [self._sanitize_for_monitor(item, key) for item in value]
+
+        if isinstance(value, str):
+            is_large_data = len(value) > 8192 and (
+                value.startswith("data:")
+                or key in {"url", "b64_json", "base64", "image", "file"}
+            )
+            if is_large_data:
+                return f"[omitted {len(value)} chars for billing]"
+
+        return value
+
     async def request(
         self, client: AsyncClient, url: str, headers: dict, json_data: dict
     ):
+        def serialize(value):
+            if hasattr(value, "model_dump"):
+                return value.model_dump()
+            if hasattr(value, "dict"):
+                return value.dict()
+            return str(value)
+
         json_data = json.loads(
             json.dumps(
-                json_data, default=lambda o: o.dict() if hasattr(o, "dict") else str(o)
+                self._sanitize_for_monitor(json_data),
+                default=serialize,
             )
         )
 
@@ -118,7 +158,11 @@ class Filter:
                 client=client,
                 url=f"{self.valves.api_endpoint}/api/v1/inlet",
                 headers={"Authorization": f"Bearer {self.valves.api_key}"},
-                json_data={"user": __user__, "body": body},
+                json_data={
+                    "user": __user__,
+                    "metadata": __metadata__,
+                    "body": body,
+                },
             )
             self.outage_map[user_id] = response_data.get("balance", 0) <= 0
             if self.outage_map[user_id]:
@@ -164,7 +208,11 @@ class Filter:
                 client=client,
                 url=f"{self.valves.api_endpoint}/api/v1/outlet",
                 headers={"Authorization": f"Bearer {self.valves.api_key}"},
-                json_data={"user": __user__, "body": body},
+                json_data={
+                    "user": __user__,
+                    "metadata": __metadata__,
+                    "body": body,
+                },
             )
 
             stats_list = []

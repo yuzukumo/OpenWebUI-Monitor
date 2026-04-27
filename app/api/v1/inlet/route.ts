@@ -3,13 +3,46 @@ import { getOrCreateUser } from '@/lib/db/users'
 import { query } from '@/lib/db/client'
 import { MAX_BALANCE_MICROS, microsToNumber } from '@/lib/utils/money'
 import { getModelInletCostMicros } from '@/lib/utils/inlet-cost'
+import { extractBillingUserFromPayload } from '@/lib/utils/openwebui-payload'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
     try {
-        const data = await req.json()
-        const user = await getOrCreateUser(data.user)
+        let data: {
+            body?: {
+                model?: string | null
+            }
+            [key: string]: unknown
+        }
+
+        try {
+            data = await req.json()
+        } catch {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: 'Invalid JSON payload',
+                    error_type: 'INVALID_JSON',
+                },
+                { status: 400 }
+            )
+        }
+
+        const billingUser = extractBillingUserFromPayload(data)
+
+        if (!billingUser) {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: 'Missing OpenWebUI user id',
+                    error_type: 'MISSING_USER_ID',
+                },
+                { status: 400 }
+            )
+        }
+
+        const user = await getOrCreateUser(billingUser)
         const modelId = data.body?.model
 
         const inletCostMicros = getModelInletCostMicros(modelId)

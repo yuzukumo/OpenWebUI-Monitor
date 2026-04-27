@@ -3,7 +3,6 @@ from pydantic import Field, BaseModel
 import requests
 import time
 from open_webui.utils.misc import get_last_assistant_message
-import json
 import os
 
 
@@ -38,13 +37,45 @@ class Filter:
 
     def _prepare_user_dict(self, __user__: dict) -> dict:
         """将 __user__ 对象转换为可序列化的字典"""
-        user_dict = dict(__user__)  # 创建副本以避免修改原始对象
+        user_dict = dict(__user__ or {})  # 创建副本以避免修改原始对象
 
         # 如果存在 valves 且是 BaseModel 的实例，将其转换为字典
         if "valves" in user_dict and hasattr(user_dict["valves"], "model_dump"):
             user_dict["valves"] = user_dict["valves"].model_dump()
 
         return user_dict
+
+    def _sanitize_for_monitor(self, value, key: Optional[str] = None):
+        if isinstance(value, dict):
+            if value.get("type") == "image_url":
+                item = dict(value)
+                image_url = item.get("image_url")
+                if isinstance(image_url, dict):
+                    item["image_url"] = {
+                        **image_url,
+                        "url": "[image omitted for billing]",
+                    }
+                return item
+
+            sanitized = {}
+            for child_key, child_value in value.items():
+                sanitized[child_key] = self._sanitize_for_monitor(
+                    child_value, child_key
+                )
+            return sanitized
+
+        if isinstance(value, list):
+            return [self._sanitize_for_monitor(item, key) for item in value]
+
+        if isinstance(value, str):
+            is_large_data = len(value) > 8192 and (
+                value.startswith("data:")
+                or key in {"url", "b64_json", "base64", "image", "file"}
+            )
+            if is_large_data:
+                return f"[omitted {len(value)} chars for billing]"
+
+        return value
 
     def _modify_outlet_body(self, body: dict) -> dict:
         body_modify = dict(body)
@@ -64,13 +95,15 @@ class Filter:
             headers = {"Authorization": f"Bearer {self.valves.API_KEY}"}
 
             # 使用 _prepare_user_dict 处理 __user__ 对象
-            user_dict = self._prepare_user_dict(__user__)
+            user_dict = self._prepare_user_dict(__user__ or user or {})
             body_dict = self._prepare_request_body(body)
             self.inlet_temp = body_dict
             request_data = {
                 "user": user_dict,
+                "metadata": body_dict.get("metadata", {}),
                 "body": body_dict
             }
+            request_data = self._sanitize_for_monitor(request_data)
             response = requests.post(post_url, headers=headers, json=request_data)
 
             if response.status_code == 401:
@@ -115,13 +148,15 @@ class Filter:
             headers = {"Authorization": f"Bearer {self.valves.API_KEY}"}
 
             # 使用 _prepare_user_dict 处理 __user__ 对象
-            user_dict = self._prepare_user_dict(__user__)
+            user_dict = self._prepare_user_dict(__user__ or user or {})
             body_dict = self._prepare_request_body(body)
             body_modify = self._modify_outlet_body(body_dict)
             request_data = {
                 "user": user_dict,
+                "metadata": body_dict.get("metadata", {}),
                 "body": body_modify
             }
+            request_data = self._sanitize_for_monitor(request_data)
             response = requests.post(post_url, headers=headers, json=request_data)
 
 
@@ -151,9 +186,6 @@ class Filter:
             output_tokens = result["outputTokens"]
             total_cost = result["totalCost"]
             new_balance = result["newBalance"]
-
-            print(f"user_dict: {json.dumps(user_dict, indent=4)}")
-            print(f"inlet body: {json.dumps(body, indent=4)}")
 
             # 从 body 中获取消息 ID
             messages = body.get("messages", [])

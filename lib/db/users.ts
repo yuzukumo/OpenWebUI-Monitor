@@ -59,6 +59,49 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null
 }
 
+function getStringField(
+    record: Record<string, unknown>,
+    keys: string[]
+): string {
+    for (const key of keys) {
+        const value = record[key]
+
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim()
+        }
+    }
+
+    return ''
+}
+
+export function normalizeBillingUser(userData: unknown): User | null {
+    if (!isRecord(userData)) {
+        return null
+    }
+
+    const id = getStringField(userData, ['id', 'user_id', 'userId', 'sub'])
+
+    if (!id) {
+        return null
+    }
+
+    const email =
+        getStringField(userData, ['email', 'mail']) || `${id}@openwebui.local`
+    const name =
+        getStringField(userData, ['name', 'display_name', 'displayName']) ||
+        email ||
+        id
+    const role = getStringField(userData, ['role']) || 'user'
+
+    return {
+        id,
+        email,
+        name,
+        role,
+        balance: 0,
+    }
+}
+
 function normalizeOpenWebUIUser(user: unknown): OpenWebUIUser | null {
     if (!isRecord(user)) {
         return null
@@ -368,7 +411,13 @@ export async function ensureUserTableExists() {
   `)
 }
 
-export async function getOrCreateUser(userData: User) {
+export async function getOrCreateUser(userData: unknown) {
+    const normalizedUser = normalizeBillingUser(userData)
+
+    if (!normalizedUser) {
+        throw new Error('Missing OpenWebUI user id')
+    }
+
     await ensureUserTableExists()
     const initBalanceMicros = decimalToMicros(process.env.INIT_BALANCE || '0')
 
@@ -393,10 +442,10 @@ export async function getOrCreateUser(userData: User) {
           exists_in_openwebui = TRUE
       RETURNING *`,
         [
-            userData.id,
-            userData.email,
-            userData.name,
-            userData.role || 'user',
+            normalizedUser.id,
+            normalizedUser.email,
+            normalizedUser.name,
+            normalizedUser.role || 'user',
             microsToDecimalString(initBalanceMicros),
             initBalanceMicros.toString(),
         ]

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { encode } from 'gpt-tokenizer/model/gpt-4'
 import type { PoolClient } from 'pg'
 import { ensureTablesExist, query, withTransaction } from '@/lib/db/client'
+import { getOrCreateUser } from '@/lib/db/users'
 import {
     MAX_BALANCE_MICROS,
     calculateTokenCostMicros,
@@ -11,6 +12,7 @@ import {
     parseMicros,
 } from '@/lib/utils/money'
 import { getModelInletCostMicros } from '@/lib/utils/inlet-cost'
+import { extractBillingUserFromPayload } from '@/lib/utils/openwebui-payload'
 
 export const dynamic = 'force-dynamic'
 
@@ -183,10 +185,44 @@ export async function POST(req: Request) {
     try {
         await ensureTablesExist()
 
-        const data = await req.json()
+        let data: {
+            body: {
+                model: string
+                messages: Message[]
+            }
+            [key: string]: unknown
+        }
+
+        try {
+            data = await req.json()
+        } catch {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: 'Invalid JSON payload',
+                    error_type: 'INVALID_JSON',
+                },
+                { status: 400 }
+            )
+        }
+
+        const billingUser = extractBillingUserFromPayload(data)
+
+        if (!billingUser) {
+            return NextResponse.json(
+                {
+                    success: false,
+                    error: 'Missing OpenWebUI user id',
+                    error_type: 'MISSING_USER_ID',
+                },
+                { status: 400 }
+            )
+        }
+
+        const user = await getOrCreateUser(billingUser)
         const modelId = data.body.model
-        const userId = data.user.id
-        const userName = data.user.name || 'Unknown User'
+        const userId = user.id
+        const userName = user.name || 'Unknown User'
 
         const lastMessage = data.body.messages[data.body.messages.length - 1]
 
@@ -269,7 +305,9 @@ export async function POST(req: Request) {
                 throw new Error('User does not exist')
             }
 
-            const newBalanceMicros = parseMicros(userResult.rows[0].balance_micros)
+            const newBalanceMicros = parseMicros(
+                userResult.rows[0].balance_micros
+            )
             const usedBalanceMicros = parseMicros(
                 userResult.rows[0].used_balance_micros
             )
