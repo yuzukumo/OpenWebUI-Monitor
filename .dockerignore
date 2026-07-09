@@ -1,13 +1,16 @@
 node_modules
 .next
 .git
+.github
 .env*
 npm-debug.log*
 pnpm-debug.log*
 .pnpm-store
 artifacts
 README.md
+AGENTS.md
 .gitignore
 .dockerignore
 Dockerfile
-docker-compose.yml 
+docker-compose.yml
+scripts/e2e
