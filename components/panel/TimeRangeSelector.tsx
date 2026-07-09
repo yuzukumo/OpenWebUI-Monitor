@@ -25,12 +25,7 @@ import { format } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 
 export type TimeRangeType =
-    | 'today'
-    | 'week'
-    | 'month'
-    | '30days'
-    | 'all'
-    | 'custom'
+    'today' | 'week' | 'month' | '30days' | 'all' | 'custom'
 
 interface TimeRangeSelectorProps {
     timeRange: [Date, Date]
@@ -290,7 +285,7 @@ export default function TimeRangeSelector({
                                                       )
                                                     : false
                                             }
-                                            initialFocus
+                                            autoFocus
                                             locale={
                                                 i18n.language === 'zh'
                                                     ? zhCN
@@ -342,7 +337,7 @@ export default function TimeRangeSelector({
                                                       )
                                                     : false
                                             }
-                                            initialFocus
+                                            autoFocus
                                             locale={
                                                 i18n.language === 'zh'
                                                     ? zhCN

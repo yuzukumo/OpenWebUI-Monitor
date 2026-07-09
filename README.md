@@ -1,5 +1,5 @@
 <div align="center">
-  
+
 ![](https://github.com/user-attachments/assets/fb90a4cc-2e54-495c-87ca-34c1a54bf2c8)
 
 # OpenWebUI Monitor
@@ -44,43 +44,43 @@ Example `docker-compose.yml`:
 
 ```yaml
 services:
-  openwebui-monitor:
-    image: ghcr.io/yuzukumo/openwebui-monitor:latest
-    ports:
-      - "127.0.0.1:3003:3000"
-    environment:
-      - POSTGRES_HOST=${POSTGRES_HOST:-openwebui-monitor-db}
-      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
-      - POSTGRES_DATABASE=${POSTGRES_DATABASE:-openwebui_monitor}
-      - OPENWEBUI_DOMAIN=${OPENWEBUI_DOMAIN:-http://open-webui:8080}
-      - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
-      - ACCESS_TOKEN=${ACCESS_TOKEN}
-      - API_KEY=${API_KEY}
-      - OPENWEBUI_USERS_SYNC_INTERVAL_MS=${OPENWEBUI_USERS_SYNC_INTERVAL_MS:-30000}
-    depends_on:
-      openwebui-monitor-db:
-        condition: service_healthy
-    restart: always
+    openwebui-monitor:
+        image: ghcr.io/yuzukumo/openwebui-monitor:latest
+        ports:
+            - '127.0.0.1:3003:3000'
+        environment:
+            - POSTGRES_HOST=${POSTGRES_HOST:-openwebui-monitor-db}
+            - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+            - POSTGRES_USER=${POSTGRES_USER:-postgres}
+            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
+            - POSTGRES_DATABASE=${POSTGRES_DATABASE:-openwebui_monitor}
+            - OPENWEBUI_DOMAIN=${OPENWEBUI_DOMAIN:-http://open-webui:8080}
+            - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
+            - ACCESS_TOKEN=${ACCESS_TOKEN}
+            - API_KEY=${API_KEY}
+            - OPENWEBUI_USERS_SYNC_INTERVAL_MS=${OPENWEBUI_USERS_SYNC_INTERVAL_MS:-30000}
+        depends_on:
+            openwebui-monitor-db:
+                condition: service_healthy
+        restart: always
 
-  openwebui-monitor-db:
-    image: postgres:18-alpine
-    environment:
-      - POSTGRES_USER=${POSTGRES_USER:-postgres}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
-      - POSTGRES_DB=${POSTGRES_DATABASE:-openwebui_monitor}
-    volumes:
-      - postgres_data:/var/lib/postgresql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: always
+    openwebui-monitor-db:
+        image: postgres:18-alpine
+        environment:
+            - POSTGRES_USER=${POSTGRES_USER:-postgres}
+            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
+            - POSTGRES_DB=${POSTGRES_DATABASE:-openwebui_monitor}
+        volumes:
+            - postgres_data:/var/lib/postgresql
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
+            interval: 5s
+            timeout: 5s
+            retries: 5
+        restart: always
 
 volumes:
-  postgres_data:
+    postgres_data:
 ```
 
 > **PostgreSQL 18 note**: for fresh Postgres 18 deployments, mount `/var/lib/postgresql`, not `/var/lib/postgresql/data`.
@@ -110,40 +110,47 @@ sudo docker compose up -d
 
 ### Optional
 
-| Variable Name                    | Description                                                                                                                                 | Default Value |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------- |
-| POSTGRES_URL                     | PostgreSQL connection string. If set, it takes precedence over individual `POSTGRES_*` variables                                            | unset         |
-| DATABASE_URL                     | Alternative PostgreSQL connection string name, used if `POSTGRES_URL` is not set                                                           | unset         |
-| POSTGRES_HOST                    | PostgreSQL host                                                                                                                             | `db`          |
-| POSTGRES_PORT                    | PostgreSQL port                                                                                                                             | `5432`        |
-| POSTGRES_USER                    | PostgreSQL username                                                                                                                         | `postgres`    |
-| POSTGRES_PASSWORD                | PostgreSQL password                                                                                                                         | unset         |
+| Variable Name                    | Description                                                                                                                                 | Default Value       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| POSTGRES_URL                     | PostgreSQL connection string. If set, it takes precedence over individual `POSTGRES_*` variables                                            | unset               |
+| DATABASE_URL                     | Alternative PostgreSQL connection string name, used if `POSTGRES_URL` is not set                                                            | unset               |
+| POSTGRES_HOST                    | PostgreSQL host                                                                                                                             | `db`                |
+| POSTGRES_PORT                    | PostgreSQL port                                                                                                                             | `5432`              |
+| POSTGRES_USER                    | PostgreSQL username                                                                                                                         | `postgres`          |
+| POSTGRES_PASSWORD                | PostgreSQL password                                                                                                                         | unset               |
 | POSTGRES_DATABASE                | PostgreSQL database name                                                                                                                    | `openwebui_monitor` |
-| DEFAULT_MODEL_INPUT_PRICE        | Default model input price, in USD per million tokens                                                                                        | `60`          |
-| DEFAULT_MODEL_OUTPUT_PRICE       | Default model output price, in USD per million tokens                                                                                       | `60`          |
-| DEFAULT_MODEL_PER_MSG_PRICE      | Default model price for each message, in USD                                                                                                | `-1`          |
-| INIT_BALANCE                     | Initial user balance                                                                                                                        | `0`           |
-| COST_ON_INLET                    | Pre-deduction amount on inlet. Can be a fixed number for all models (e.g. `0.1`), or model-specific format (e.g. `gpt-4:0.32,gpt-3.5:0.01`) | `0`           |
-| OPENWEBUI_USERS_SYNC_INTERVAL_MS | Interval in milliseconds for refreshing the authoritative user list from OpenWebUI on the user-management API                               | `30000`       |
+| DEFAULT_MODEL_INPUT_PRICE        | Default model input price, in USD per million tokens                                                                                        | `60`                |
+| DEFAULT_MODEL_OUTPUT_PRICE       | Default model output price, in USD per million tokens                                                                                       | `60`                |
+| DEFAULT_MODEL_PER_MSG_PRICE      | Default model price for each message, in USD                                                                                                | `-1`                |
+| INIT_BALANCE                     | Initial user balance                                                                                                                        | `0`                 |
+| COST_ON_INLET                    | Pre-deduction amount on inlet. Can be a fixed number for all models (e.g. `0.1`), or model-specific format (e.g. `gpt-4:0.32,gpt-3.5:0.01`) | `0`                 |
+| OPENWEBUI_USERS_SYNC_INTERVAL_MS | Interval in milliseconds for refreshing the authoritative user list from OpenWebUI on the user-management API                               | `30000`             |
 
 ## Testing
 
-This repository includes a reproducible end-to-end test that boots PostgreSQL, the official OpenWebUI slim image, a mock OpenAI-compatible backend, and then validates the monitor with Chromium screenshots.
+This repository includes a lightweight reproducible end-to-end test that boots PostgreSQL, starts a mock OpenWebUI HTTP server, starts the monitor, and validates the monitor with API checks and Chromium screenshots. The default E2E path does not start a real OpenWebUI container, so it is fast enough to run after routine changes.
 
 The E2E flow currently verifies:
 
+- monitor calls to the OpenWebUI models, model-icon, users, and chat-completions interfaces
 - user sync from OpenWebUI by stable `id`
 - rename handling without duplicate local users
 - automatic removal of users deleted in OpenWebUI
 - default user order matching the OpenWebUI user list
 - used-balance accumulation and reset behavior
-- balance editing in the user page without reloading the list
-- records export and database export
-- monitor UI rendering for token, home, models, users, records, and panel pages
+- low-cost billing precision
+- model icon loading through the monitor proxy
+- monitor UI rendering for home, models, users, records, and panel pages
 
 ```bash
 pnpm e2e:install
 pnpm e2e:owu
+```
+
+For slower debugging against a real OpenWebUI slim container, run:
+
+```bash
+pnpm e2e:owu:full
 ```
 
 Artifacts are written to `artifacts/e2e/`, including logs, screenshots, and `summary.json`.

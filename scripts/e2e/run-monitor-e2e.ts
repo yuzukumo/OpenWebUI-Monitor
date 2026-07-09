@@ -1,0 +1,1264 @@
+import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import { createWriteStream } from 'node:fs'
+import { promises as fs } from 'node:fs'
+import { createServer, type Server } from 'node:http'
+import net from 'node:net'
+import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import { fileURLToPath } from 'node:url'
+import type { ChildProcess } from 'node:child_process'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+
+import { chromium, type Page } from 'playwright'
+
+interface CommandOptions {
+    cwd?: string
+    env?: NodeJS.ProcessEnv
+    logFilePath?: string
+    acceptableExitCodes?: number[]
+}
+
+interface BackgroundProcess {
+    child: ChildProcess
+    logFilePath: string
+}
+
+interface OpenWebUIUser {
+    id: string
+    email: string
+    name: string
+    role: string
+}
+
+interface MonitorUser extends OpenWebUIUser {
+    balance: number | string
+    used_balance: number | string
+    exists_in_openwebui?: boolean
+}
+
+interface MonitorUsersResponse {
+    users: MonitorUser[]
+    total: number
+}
+
+interface MonitorRecord {
+    user_id: string
+    nickname: string
+    model_name: string
+    input_tokens: number
+    output_tokens: number
+    cost: number | string
+    balance_after: number | string
+}
+
+interface MonitorRecordsResponse {
+    records: MonitorRecord[]
+    total: number
+    users: string[]
+    models: string[]
+}
+
+interface DatabaseExportPayload {
+    data: {
+        users: MonitorUser[]
+        model_prices: Array<Record<string, unknown>>
+        user_usage_records: Array<Record<string, unknown>>
+    }
+}
+
+interface MockOpenWebUIRequest {
+    method: string
+    path: string
+    authorization: string
+    body: unknown
+}
+
+interface MockOpenWebUIState {
+    users: OpenWebUIUser[]
+    requests: MockOpenWebUIRequest[]
+}
+
+interface MockOpenWebUIServer {
+    server: Server
+    state: MockOpenWebUIState
+    close: () => Promise<void>
+}
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const ROOT_DIR = path.resolve(__dirname, '../..')
+const ARTIFACTS_DIR = path.join(ROOT_DIR, 'artifacts/e2e')
+const LOGS_DIR = path.join(ARTIFACTS_DIR, 'logs')
+const SCREENSHOTS_DIR = path.join(ARTIFACTS_DIR, 'screenshots')
+
+const POSTGRES_IMAGE = process.env.E2E_POSTGRES_IMAGE || 'postgres:18-alpine'
+const POSTGRES_CONTAINER_NAME = 'owu-monitor-e2e-postgres'
+const MOCK_OPENWEBUI_TOKEN = 'mock-openwebui-admin-token'
+
+let OWU_PORT = parseInt(process.env.E2E_OWU_PORT || '18080', 10)
+let MONITOR_PORT = parseInt(process.env.E2E_MONITOR_PORT || '17878', 10)
+let POSTGRES_PORT = parseInt(process.env.E2E_POSTGRES_PORT || '55432', 10)
+
+let OWU_BASE_URL = ''
+let MONITOR_BASE_URL = ''
+let POSTGRES_URL = ''
+let DOCKER_BIN = process.env.E2E_DOCKER_BIN || 'docker'
+
+const MONITOR_ACCESS_TOKEN =
+    process.env.E2E_MONITOR_ACCESS_TOKEN || 'monitor-access'
+const MONITOR_API_KEY = process.env.E2E_MONITOR_API_KEY || 'monitor-api'
+
+const ADMIN_USER: OpenWebUIUser = {
+    id: 'owu-admin-user',
+    email: 'e2e.admin@example.com',
+    name: 'E2E Admin',
+    role: 'admin',
+}
+
+const SYNC_SUBJECT_USER: OpenWebUIUser = {
+    id: 'owu-sync-subject-user',
+    email: 'sync.subject@example.com',
+    name: 'Sync Subject',
+    role: 'user',
+}
+
+const PNG_1X1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9s2R0f8AAAAASUVORK5CYII=',
+    'base64'
+)
+
+class CleanupStack {
+    private tasks: Array<() => Promise<void>> = []
+
+    push(task: () => Promise<void>) {
+        this.tasks.unshift(task)
+    }
+
+    async runAll() {
+        for (const task of this.tasks) {
+            try {
+                await task()
+            } catch (error) {
+                console.error('[monitor-e2e] Cleanup failed:', error)
+            }
+        }
+    }
+}
+
+function logStep(message: string) {
+    console.log(`[monitor-e2e] ${message}`)
+}
+
+function refreshRuntimeUrls() {
+    OWU_BASE_URL = `http://127.0.0.1:${OWU_PORT}`
+    MONITOR_BASE_URL = `http://127.0.0.1:${MONITOR_PORT}`
+    POSTGRES_URL = `postgresql://postgres:openwebui@127.0.0.1:${POSTGRES_PORT}/openwebui_monitor`
+}
+
+async function ensureArtifactsDirs() {
+    await fs.rm(ARTIFACTS_DIR, { recursive: true, force: true })
+    await fs.mkdir(LOGS_DIR, { recursive: true })
+    await fs.mkdir(SCREENSHOTS_DIR, { recursive: true })
+}
+
+async function isPortAvailable(port: number) {
+    return new Promise<boolean>((resolve) => {
+        const server = net.createServer()
+
+        server.once('error', () => resolve(false))
+        server.once('listening', () => {
+            server.close(() => resolve(true))
+        })
+        server.listen(port, '127.0.0.1')
+    })
+}
+
+async function getFreePort() {
+    return new Promise<number>((resolve, reject) => {
+        const server = net.createServer()
+
+        server.once('error', reject)
+        server.listen(0, '127.0.0.1', () => {
+            const address = server.address()
+            if (!address || typeof address === 'string') {
+                reject(new Error('Failed to allocate a free TCP port'))
+                return
+            }
+
+            server.close(() => resolve(address.port))
+        })
+    })
+}
+
+async function choosePort(preferredPort: number) {
+    return (await isPortAvailable(preferredPort))
+        ? preferredPort
+        : getFreePort()
+}
+
+async function runCommand(
+    command: string,
+    args: string[],
+    {
+        cwd = ROOT_DIR,
+        env = process.env,
+        logFilePath,
+        acceptableExitCodes = [0],
+    }: CommandOptions = {}
+) {
+    await fs.mkdir(LOGS_DIR, { recursive: true })
+
+    const child = spawn(command, args, {
+        cwd,
+        env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    const stdoutChunks: Buffer[] = []
+    const stderrChunks: Buffer[] = []
+    const logStream = logFilePath ? createWriteStream(logFilePath) : null
+
+    child.stdout.on('data', (chunk: Buffer) => {
+        stdoutChunks.push(chunk)
+        logStream?.write(chunk)
+    })
+    child.stderr.on('data', (chunk: Buffer) => {
+        stderrChunks.push(chunk)
+        logStream?.write(chunk)
+    })
+
+    const exitCode = await new Promise<number>((resolve, reject) => {
+        child.once('error', reject)
+        child.once('close', (code) => resolve(code ?? 0))
+    })
+
+    await new Promise<void>((resolve) => {
+        if (!logStream) {
+            resolve()
+            return
+        }
+        logStream.end(resolve)
+    })
+
+    const stdout = Buffer.concat(stdoutChunks).toString('utf8')
+    const stderr = Buffer.concat(stderrChunks).toString('utf8')
+
+    if (!acceptableExitCodes.includes(exitCode)) {
+        throw new Error(
+            `${command} ${args.join(
+                ' '
+            )} exited with ${exitCode}\n${stdout}${stderr}`
+        )
+    }
+
+    return { stdout, stderr, exitCode }
+}
+
+async function startBackgroundProcess(
+    name: string,
+    command: string,
+    args: string[],
+    options: Omit<CommandOptions, 'acceptableExitCodes'> = {}
+): Promise<BackgroundProcess> {
+    const logFilePath = path.join(LOGS_DIR, `${name}.log`)
+    const child = spawn(command, args, {
+        cwd: options.cwd || ROOT_DIR,
+        env: options.env || process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const logStream = createWriteStream(logFilePath)
+
+    child.stdout.pipe(logStream, { end: false })
+    child.stderr.pipe(logStream, { end: false })
+
+    child.once('exit', (code, signal) => {
+        logStream.write(`\n[process exited code=${code} signal=${signal}]\n`)
+        logStream.end()
+    })
+
+    await sleep(500)
+    if (child.exitCode !== null) {
+        throw new Error(`${name} exited early; see ${logFilePath}`)
+    }
+
+    return { child, logFilePath }
+}
+
+async function stopBackgroundProcess(process: BackgroundProcess) {
+    if (process.child.exitCode !== null) {
+        return
+    }
+
+    process.child.kill('SIGTERM')
+
+    await Promise.race([
+        new Promise<void>((resolve) => {
+            process.child.once('exit', () => resolve())
+        }),
+        sleep(5000).then(() => {
+            if (process.child.exitCode === null) {
+                process.child.kill('SIGKILL')
+            }
+        }),
+    ])
+}
+
+async function waitForTcpPort(host: string, port: number, timeoutMs = 60_000) {
+    const startedAt = Date.now()
+
+    while (Date.now() - startedAt < timeoutMs) {
+        const canConnect = await new Promise<boolean>((resolve) => {
+            const socket = net.createConnection({ host, port })
+            socket.once('connect', () => {
+                socket.destroy()
+                resolve(true)
+            })
+            socket.once('error', () => resolve(false))
+        })
+
+        if (canConnect) {
+            return
+        }
+
+        await sleep(500)
+    }
+
+    throw new Error(`Timed out waiting for TCP ${host}:${port}`)
+}
+
+async function waitForHttp(
+    url: string,
+    {
+        timeoutMs = 60_000,
+        validate = (response: Response) => response.ok,
+    }: {
+        timeoutMs?: number
+        validate?: (response: Response, bodyText: string) => boolean
+    } = {}
+) {
+    const startedAt = Date.now()
+    let lastError: unknown = null
+
+    while (Date.now() - startedAt < timeoutMs) {
+        try {
+            const response = await fetch(url, { cache: 'no-store' })
+            const bodyText = await response.text()
+
+            if (validate(response, bodyText)) {
+                return
+            }
+
+            lastError = new Error(`${response.status} ${bodyText}`)
+        } catch (error) {
+            lastError = error
+        }
+
+        await sleep(500)
+    }
+
+    throw new Error(`Timed out waiting for ${url}: ${String(lastError)}`)
+}
+
+async function resolveDockerCommand() {
+    const candidates = [
+        process.env.E2E_DOCKER_BIN,
+        'docker',
+        '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe',
+    ].filter((candidate): candidate is string => Boolean(candidate))
+
+    for (const candidate of candidates) {
+        try {
+            await runCommand(candidate, ['info'], {
+                logFilePath: path.join(LOGS_DIR, 'docker-info.log'),
+            })
+            return candidate
+        } catch {
+            continue
+        }
+    }
+
+    throw new Error('Unable to connect to Docker using docker or docker.exe')
+}
+
+async function removeDockerContainer(name: string) {
+    await runCommand(DOCKER_BIN, ['rm', '-f', name], {
+        logFilePath: path.join(LOGS_DIR, `docker-rm-${name}.log`),
+        acceptableExitCodes: [0, 1],
+    })
+}
+
+async function waitForPostgresContainer() {
+    const startedAt = Date.now()
+
+    while (Date.now() - startedAt < 60_000) {
+        try {
+            await runCommand(
+                DOCKER_BIN,
+                [
+                    'exec',
+                    POSTGRES_CONTAINER_NAME,
+                    'pg_isready',
+                    '-U',
+                    'postgres',
+                    '-d',
+                    'openwebui_monitor',
+                ],
+                {
+                    logFilePath: path.join(LOGS_DIR, 'postgres-ready.log'),
+                }
+            )
+            return
+        } catch {
+            await sleep(500)
+        }
+    }
+
+    throw new Error('Timed out waiting for PostgreSQL readiness')
+}
+
+function sendJson(response: ServerResponse, status: number, payload: unknown) {
+    response.statusCode = status
+    response.setHeader('Content-Type', 'application/json')
+    response.end(JSON.stringify(payload))
+}
+
+async function readJsonBody(request: IncomingMessage) {
+    const chunks: Buffer[] = []
+
+    for await (const chunk of request) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+    }
+
+    const bodyText = Buffer.concat(chunks).toString('utf8')
+    return bodyText ? JSON.parse(bodyText) : null
+}
+
+async function startMockOpenWebUI(port: number): Promise<MockOpenWebUIServer> {
+    const state: MockOpenWebUIState = {
+        users: [{ ...ADMIN_USER }, { ...SYNC_SUBJECT_USER }],
+        requests: [],
+    }
+
+    const server = createServer(async (request, response) => {
+        const url = new URL(
+            request.url || '/',
+            `http://${request.headers.host || '127.0.0.1'}`
+        )
+        const body =
+            request.method === 'POST' || request.method === 'PUT'
+                ? await readJsonBody(request)
+                : null
+
+        state.requests.push({
+            method: request.method || 'GET',
+            path: url.pathname,
+            authorization: request.headers.authorization || '',
+            body,
+        })
+
+        if (request.method === 'GET' && url.pathname === '/health') {
+            return sendJson(response, 200, { status: 'ok' })
+        }
+
+        if (request.method === 'GET' && url.pathname === '/api/models') {
+            return sendJson(response, 200, {
+                data: [
+                    {
+                        id: 'gpt-4o-mini',
+                        name: 'gpt-4o-mini',
+                        updated_at: 1,
+                        info: {
+                            id: 'gpt-4o-mini',
+                            name: 'gpt-4o-mini',
+                            updated_at: 1,
+                            params: { system: '' },
+                        },
+                    },
+                    {
+                        id: 'gpt-image-1',
+                        name: 'gpt-image-1',
+                        updated_at: 2,
+                        info: {
+                            id: 'gpt-image-1',
+                            name: 'gpt-image-1',
+                            updated_at: 2,
+                            params: { system: '' },
+                        },
+                    },
+                    {
+                        id: 'custom.gpt-4o-mini',
+                        name: 'Custom GPT-4o Mini',
+                        updated_at: 3,
+                        info: {
+                            id: 'custom.gpt-4o-mini',
+                            name: 'Custom GPT-4o Mini',
+                            base_model_id: 'gpt-4o-mini',
+                            updated_at: 3,
+                            params: { system: 'You are concise.' },
+                        },
+                    },
+                ],
+            })
+        }
+
+        if (
+            request.method === 'GET' &&
+            url.pathname === '/api/v1/models/model/profile/image'
+        ) {
+            response.statusCode = 200
+            response.setHeader('Content-Type', 'image/png')
+            response.setHeader('ETag', '"mock-model-icon"')
+            response.end(PNG_1X1)
+            return
+        }
+
+        if (request.method === 'GET' && url.pathname === '/api/v1/users') {
+            return sendJson(response, 200, {
+                users: state.users,
+                total: state.users.length,
+            })
+        }
+
+        if (request.method === 'GET' && url.pathname === '/api/v1/users/all') {
+            return sendJson(response, 200, [...state.users].reverse())
+        }
+
+        if (
+            request.method === 'POST' &&
+            url.pathname === '/api/chat/completions'
+        ) {
+            return sendJson(response, 200, {
+                id: 'chatcmpl-monitor-e2e',
+                object: 'chat.completion',
+                created: Math.floor(Date.now() / 1000),
+                model:
+                    typeof body?.model === 'string'
+                        ? body.model
+                        : 'gpt-4o-mini',
+                choices: [
+                    {
+                        index: 0,
+                        finish_reason: 'stop',
+                        message: {
+                            role: 'assistant',
+                            content: 'hi from mock OpenWebUI',
+                        },
+                    },
+                ],
+                usage: {
+                    prompt_tokens: 9,
+                    completion_tokens: 4,
+                    total_tokens: 13,
+                },
+            })
+        }
+
+        return sendJson(response, 404, {
+            error: `Unsupported mock OpenWebUI route: ${request.method} ${url.pathname}`,
+        })
+    })
+
+    await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(port, '127.0.0.1', () => resolve())
+    })
+
+    return {
+        server,
+        state,
+        close: () =>
+            new Promise<void>((resolve) => {
+                server.close(() => resolve())
+            }),
+    }
+}
+
+function authHeaders(token = MONITOR_ACCESS_TOKEN) {
+    return {
+        Authorization: `Bearer ${token}`,
+    }
+}
+
+function jsonHeaders(token = MONITOR_ACCESS_TOKEN) {
+    return {
+        ...authHeaders(token),
+        'Content-Type': 'application/json',
+    }
+}
+
+async function requestJson<T>(
+    url: string,
+    init: RequestInit = {},
+    { expectOk = true }: { expectOk?: boolean } = {}
+) {
+    const response = await fetch(url, { ...init, cache: 'no-store' })
+    const responseText = await response.text()
+    let data: T | null = null
+
+    if (responseText) {
+        try {
+            data = JSON.parse(responseText) as T
+        } catch {
+            data = null
+        }
+    }
+
+    if (expectOk && !response.ok) {
+        throw new Error(
+            `Request failed for ${url}: ${response.status} ${responseText}`
+        )
+    }
+
+    return { response, data, responseText }
+}
+
+async function fetchMonitorUsers() {
+    const { data } = await requestJson<MonitorUsersResponse>(
+        `${MONITOR_BASE_URL}/api/v1/users?page=1&pageSize=100`,
+        {
+            headers: authHeaders(),
+        }
+    )
+
+    assert(data, 'Missing monitor users response')
+    return data
+}
+
+async function fetchDatabaseExport() {
+    const { data } = await requestJson<DatabaseExportPayload>(
+        `${MONITOR_BASE_URL}/api/v1/panel/database/export`,
+        {
+            headers: authHeaders(),
+        }
+    )
+
+    assert(data, 'Missing database export response')
+    return data
+}
+
+async function waitForRecords() {
+    const startedAt = Date.now()
+    let lastRecords: MonitorRecordsResponse | null = null
+
+    while (Date.now() - startedAt < 30_000) {
+        const { data } = await requestJson<MonitorRecordsResponse>(
+            `${MONITOR_BASE_URL}/api/v1/panel/records?page=1&pageSize=20`,
+            {
+                headers: authHeaders(),
+            }
+        )
+
+        assert(data, 'Missing usage records response')
+        lastRecords = data
+
+        if (
+            data.records.some((record) => record.model_name === 'gpt-4o-mini')
+        ) {
+            return data
+        }
+
+        await sleep(500)
+    }
+
+    throw new Error(
+        `Timed out waiting for usage records: ${JSON.stringify(lastRecords)}`
+    )
+}
+
+function findOpenWebUIRequest(
+    state: MockOpenWebUIState,
+    method: string,
+    path: string
+) {
+    return state.requests.find(
+        (request) => request.method === method && request.path === path
+    )
+}
+
+function assertAuthorizedOpenWebUIRequest(
+    state: MockOpenWebUIState,
+    method: string,
+    path: string
+) {
+    const request = findOpenWebUIRequest(state, method, path)
+
+    assert(request, `Missing mock OpenWebUI request: ${method} ${path}`)
+    assert.equal(
+        request.authorization,
+        `Bearer ${MOCK_OPENWEBUI_TOKEN}`,
+        `Unexpected auth header for ${method} ${path}`
+    )
+
+    return request
+}
+
+async function waitForVisibleText(
+    page: Page,
+    text: string,
+    timeoutMs = 30_000
+) {
+    await page.waitForFunction(
+        (expectedText) =>
+            Array.from(document.querySelectorAll('body *')).some((element) => {
+                if (!(element instanceof HTMLElement)) {
+                    return false
+                }
+
+                const rect = element.getBoundingClientRect()
+                let current: HTMLElement | null = element
+
+                while (current) {
+                    const style = window.getComputedStyle(current)
+
+                    if (
+                        style.display === 'none' ||
+                        style.visibility === 'hidden' ||
+                        style.opacity === '0'
+                    ) {
+                        return false
+                    }
+
+                    current = current.parentElement
+                }
+
+                return (
+                    element.innerText.includes(expectedText) &&
+                    rect.width > 0 &&
+                    rect.height > 0
+                )
+            }),
+        text,
+        { timeout: timeoutMs }
+    )
+}
+
+async function assertTailwindStylesApplied(page: Page) {
+    const radius = await page
+        .locator('.rounded-xl')
+        .first()
+        .evaluate((node) => {
+            return window.getComputedStyle(node).borderRadius
+        })
+
+    assert(
+        parseFloat(radius) > 0,
+        `Tailwind styles do not appear to be applied; rounded-xl radius=${radius}`
+    )
+}
+
+async function waitForLoadedImageAlt(
+    page: Page,
+    altText: string,
+    timeoutMs = 30_000
+) {
+    await page.waitForFunction(
+        (expectedAltText) =>
+            Array.from(document.querySelectorAll('img')).some((image) => {
+                return (
+                    image instanceof HTMLImageElement &&
+                    image.alt === expectedAltText &&
+                    image.complete &&
+                    image.naturalWidth > 0 &&
+                    image.naturalHeight > 0
+                )
+            }),
+        altText,
+        { timeout: timeoutMs }
+    )
+}
+
+function colorBrightness(color: string) {
+    const labLightness = color.match(/lab\(\s*([\d.]+)%?/i)?.[1]
+
+    if (labLightness) {
+        return (Number(labLightness) / 100) * 255
+    }
+
+    const channels = color
+        .match(/rgba?\(([^)]+)\)/i)?.[1]
+        .split(',')
+        .slice(0, 3)
+        .map((channel) => Number(channel.trim()))
+
+    assert(channels?.length === 3, `Unsupported CSS color value: ${color}`)
+
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+}
+
+async function assertDarkActionButtonIsReadable(page: Page, name: string) {
+    const styles = await page.getByRole('button', { name }).evaluate((node) => {
+        const style = window.getComputedStyle(node)
+
+        return {
+            backgroundColor: style.backgroundColor,
+            color: style.color,
+        }
+    })
+
+    const backgroundBrightness = colorBrightness(styles.backgroundColor)
+    const textBrightness = colorBrightness(styles.color)
+
+    assert(
+        backgroundBrightness < 80,
+        `${name} should keep a dark action background; got ${styles.backgroundColor}`
+    )
+    assert(
+        textBrightness > 200,
+        `${name} should keep readable light text; got ${styles.color}`
+    )
+}
+
+async function runChromiumChecks() {
+    const browser = await chromium.launch({
+        headless: process.env.E2E_HEADLESS !== '0',
+    })
+    const screenshots: Record<string, string> = {}
+
+    try {
+        const context = await browser.newContext({
+            locale: 'en-US',
+            viewport: { width: 1440, height: 1100 },
+        })
+
+        await context.route(
+            'https://api.github.com/repos/variantconst/openwebui-monitor/releases/latest',
+            async (route) => {
+                await route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({ tag_name: 'v0.0.0-e2e' }),
+                })
+            }
+        )
+
+        const page = await context.newPage()
+
+        await page.goto(`${MONITOR_BASE_URL}/token`, {
+            waitUntil: 'networkidle',
+        })
+        await page.fill('#token', MONITOR_ACCESS_TOKEN)
+        await page.getByRole('button', { name: 'Confirm' }).click()
+        await page.waitForURL(`${MONITOR_BASE_URL}/`, { timeout: 30_000 })
+        await page.waitForLoadState('networkidle')
+        screenshots.home = path.join(SCREENSHOTS_DIR, 'home.png')
+        await page.screenshot({ path: screenshots.home, fullPage: true })
+        await assertTailwindStylesApplied(page)
+
+        await page.goto(`${MONITOR_BASE_URL}/models`, {
+            waitUntil: 'networkidle',
+        })
+        await waitForVisibleText(page, 'Model Management')
+        await waitForVisibleText(page, 'gpt-4o-mini')
+        await assertDarkActionButtonIsReadable(page, 'Test All Models')
+        await assertDarkActionButtonIsReadable(page, 'Sync All Derived Models')
+        await waitForLoadedImageAlt(page, 'gpt-4o-mini')
+        screenshots.models = path.join(SCREENSHOTS_DIR, 'models.png')
+        await page.screenshot({ path: screenshots.models, fullPage: true })
+        await assertTailwindStylesApplied(page)
+
+        await page.goto(`${MONITOR_BASE_URL}/users`, {
+            waitUntil: 'networkidle',
+        })
+        await waitForVisibleText(page, 'User Management')
+        await waitForVisibleText(page, ADMIN_USER.email)
+        screenshots.users = path.join(SCREENSHOTS_DIR, 'users.png')
+        await page.screenshot({ path: screenshots.users, fullPage: true })
+        await assertTailwindStylesApplied(page)
+
+        await page.goto(`${MONITOR_BASE_URL}/records`, {
+            waitUntil: 'networkidle',
+        })
+        await waitForVisibleText(page, 'Usage Records')
+        await waitForVisibleText(page, 'gpt-4o-mini')
+        screenshots.records = path.join(SCREENSHOTS_DIR, 'records.png')
+        await page.screenshot({ path: screenshots.records, fullPage: true })
+        await assertTailwindStylesApplied(page)
+
+        await page.goto(`${MONITOR_BASE_URL}/panel`, {
+            waitUntil: 'networkidle',
+        })
+        await waitForVisibleText(page, 'Usage Statistics')
+        screenshots.panel = path.join(SCREENSHOTS_DIR, 'panel.png')
+        await page.screenshot({ path: screenshots.panel, fullPage: true })
+        await assertTailwindStylesApplied(page)
+
+        await context.close()
+    } finally {
+        await browser.close()
+    }
+
+    return { screenshots }
+}
+
+async function main() {
+    OWU_PORT = await choosePort(OWU_PORT)
+    MONITOR_PORT = await choosePort(MONITOR_PORT)
+    POSTGRES_PORT = await choosePort(POSTGRES_PORT)
+    refreshRuntimeUrls()
+
+    await ensureArtifactsDirs()
+
+    const cleanup = new CleanupStack()
+
+    try {
+        DOCKER_BIN = await resolveDockerCommand()
+        logStep(
+            `Using ports mock_owu=${OWU_PORT}, monitor=${MONITOR_PORT}, postgres=${POSTGRES_PORT}`
+        )
+        logStep(`Using Docker command: ${DOCKER_BIN}`)
+
+        logStep('Starting mock OpenWebUI server')
+        const mockOpenWebUI = await startMockOpenWebUI(OWU_PORT)
+        cleanup.push(() => mockOpenWebUI.close())
+        await waitForHttp(`${OWU_BASE_URL}/health`)
+
+        logStep('Starting PostgreSQL test container')
+        await removeDockerContainer(POSTGRES_CONTAINER_NAME)
+        cleanup.push(() => removeDockerContainer(POSTGRES_CONTAINER_NAME))
+        await runCommand(
+            DOCKER_BIN,
+            [
+                'run',
+                '-d',
+                '--rm',
+                '--name',
+                POSTGRES_CONTAINER_NAME,
+                '-e',
+                'POSTGRES_PASSWORD=openwebui',
+                '-e',
+                'POSTGRES_DB=openwebui_monitor',
+                '-p',
+                `${POSTGRES_PORT}:5432`,
+                POSTGRES_IMAGE,
+            ],
+            {
+                logFilePath: path.join(LOGS_DIR, 'postgres-run.log'),
+            }
+        )
+        await waitForTcpPort('127.0.0.1', POSTGRES_PORT)
+        await waitForPostgresContainer()
+
+        if (process.env.E2E_SKIP_BUILD !== '1') {
+            logStep('Building monitor application')
+            await runCommand('pnpm', ['build'], {
+                logFilePath: path.join(LOGS_DIR, 'monitor-build.log'),
+            })
+        }
+
+        logStep('Starting monitor application')
+        const monitorApp = await startBackgroundProcess(
+            'monitor-app',
+            'pnpm',
+            ['exec', 'next', 'start', '--port', String(MONITOR_PORT)],
+            {
+                env: {
+                    ...process.env,
+                    ACCESS_TOKEN: MONITOR_ACCESS_TOKEN,
+                    API_KEY: MONITOR_API_KEY,
+                    OPENWEBUI_DOMAIN: OWU_BASE_URL,
+                    OPENWEBUI_API_KEY: MOCK_OPENWEBUI_TOKEN,
+                    POSTGRES_URL,
+                    INIT_BALANCE: '20',
+                    OPENWEBUI_USERS_SYNC_INTERVAL_MS: '0',
+                },
+            }
+        )
+        cleanup.push(() => stopBackgroundProcess(monitorApp))
+        await waitForHttp(`${MONITOR_BASE_URL}/token`)
+
+        logStep('Checking monitor -> OpenWebUI model interfaces')
+        const { data: models } = await requestJson<
+            Array<{ id: string; imageUrl: string; base_model_id?: string }>
+        >(`${MONITOR_BASE_URL}/api/v1/models`, {
+            headers: authHeaders(),
+        })
+
+        assert(models, 'Missing models response')
+        assert(
+            models.some((model) => model.id === 'gpt-4o-mini'),
+            'Missing gpt-4o-mini from monitor models response'
+        )
+        assert(
+            models.some(
+                (model) =>
+                    model.id === 'custom.gpt-4o-mini' &&
+                    model.base_model_id === 'gpt-4o-mini'
+            ),
+            'Missing derived model base_model_id mapping'
+        )
+        assertAuthorizedOpenWebUIRequest(
+            mockOpenWebUI.state,
+            'GET',
+            '/api/models'
+        )
+
+        const iconResponse = await fetch(
+            `${MONITOR_BASE_URL}/api/v1/models/icon?id=gpt-4o-mini`,
+            {
+                headers: authHeaders(),
+                cache: 'no-store',
+                redirect: 'manual',
+            }
+        )
+        assert.equal(iconResponse.status, 200, 'Model icon proxy failed')
+        assert(
+            iconResponse.headers
+                .get('content-type')
+                ?.toLowerCase()
+                .startsWith('image/png'),
+            'Model icon proxy did not return PNG content'
+        )
+        assertAuthorizedOpenWebUIRequest(
+            mockOpenWebUI.state,
+            'GET',
+            '/api/v1/models/model/profile/image'
+        )
+
+        const { data: modelTest } = await requestJson<{ success: boolean }>(
+            `${MONITOR_BASE_URL}/api/v1/models/test`,
+            {
+                method: 'POST',
+                headers: jsonHeaders(),
+                body: JSON.stringify({ modelId: 'gpt-4o-mini' }),
+            }
+        )
+        assert(modelTest?.success, 'Model test API did not succeed')
+        assertAuthorizedOpenWebUIRequest(
+            mockOpenWebUI.state,
+            'POST',
+            '/api/chat/completions'
+        )
+
+        logStep('Checking user sync against mock OpenWebUI users API')
+        const initialUsers = await fetchMonitorUsers()
+        assert.deepEqual(
+            initialUsers.users.map((user) => user.id),
+            [ADMIN_USER.id, SYNC_SUBJECT_USER.id],
+            'Monitor user order should match OpenWebUI admin order'
+        )
+        assertAuthorizedOpenWebUIRequest(
+            mockOpenWebUI.state,
+            'GET',
+            '/api/v1/users'
+        )
+
+        mockOpenWebUI.state.users = mockOpenWebUI.state.users.map((user) =>
+            user.id === SYNC_SUBJECT_USER.id
+                ? { ...user, name: 'Renamed Subject' }
+                : user
+        )
+        const renamedUsers = await fetchMonitorUsers()
+        assert(
+            renamedUsers.users.some(
+                (user) =>
+                    user.id === SYNC_SUBJECT_USER.id &&
+                    user.name === 'Renamed Subject'
+            ),
+            'Renamed OpenWebUI user did not update in place'
+        )
+        assert.equal(
+            renamedUsers.users.filter(
+                (user) => user.id === SYNC_SUBJECT_USER.id
+            ).length,
+            1,
+            'Rename sync produced duplicate monitor users'
+        )
+
+        mockOpenWebUI.state.users = mockOpenWebUI.state.users.filter(
+            (user) => user.id !== SYNC_SUBJECT_USER.id
+        )
+        const activeUsersAfterDelete = await fetchMonitorUsers()
+        assert(
+            !activeUsersAfterDelete.users.some(
+                (user) => user.id === SYNC_SUBJECT_USER.id
+            ),
+            'Deleted OpenWebUI user still appears in active monitor users'
+        )
+        const databaseExport = await fetchDatabaseExport()
+        const hiddenUser = databaseExport.data.users.find(
+            (user) => user.id === SYNC_SUBJECT_USER.id
+        )
+        assert(hiddenUser, 'Deleted user should remain in local history')
+        assert.equal(
+            hiddenUser.exists_in_openwebui,
+            false,
+            'Deleted user should be marked absent from OpenWebUI'
+        )
+
+        logStep('Checking billing inlet/outlet and monitor records')
+        const priceUpdate = await requestJson<{
+            success: boolean
+            results: Array<{ success: boolean }>
+        }>(`${MONITOR_BASE_URL}/api/v1/models/price`, {
+            method: 'POST',
+            headers: jsonHeaders(),
+            body: JSON.stringify({
+                updates: [
+                    {
+                        id: 'gpt-4o-mini',
+                        input_price: 1,
+                        output_price: 1,
+                        per_msg_price: -1,
+                    },
+                ],
+            }),
+        })
+        assert(priceUpdate.data?.success, 'Model price update failed')
+        assert(
+            priceUpdate.data.results[0]?.success,
+            'Model price update result failed'
+        )
+
+        const sparseInlet = await requestJson<{ success: boolean }>(
+            `${MONITOR_BASE_URL}/api/v1/inlet`,
+            {
+                method: 'POST',
+                headers: jsonHeaders(MONITOR_API_KEY),
+                body: JSON.stringify({
+                    user: {
+                        id: ADMIN_USER.id,
+                        name: ADMIN_USER.name,
+                        role: ADMIN_USER.role,
+                    },
+                    metadata: {
+                        user_id: ADMIN_USER.id,
+                    },
+                    body: {
+                        model: 'gpt-4o-mini',
+                    },
+                }),
+            }
+        )
+        assert(
+            sparseInlet.data?.success,
+            'Sparse OpenWebUI inlet payload failed'
+        )
+
+        const outlet = await requestJson<{
+            success: boolean
+            inputTokens: number
+            outputTokens: number
+            totalCost: number
+        }>(`${MONITOR_BASE_URL}/api/v1/outlet`, {
+            method: 'POST',
+            headers: jsonHeaders(MONITOR_API_KEY),
+            body: JSON.stringify({
+                user: ADMIN_USER,
+                metadata: {
+                    user_id: ADMIN_USER.id,
+                },
+                body: {
+                    model: 'gpt-4o-mini',
+                    messages: [
+                        {
+                            role: 'user',
+                            content: 'Hello',
+                        },
+                        {
+                            role: 'assistant',
+                            content: 'Hi',
+                            usage: {
+                                input_tokens: 10,
+                                output_tokens: 5,
+                                total_tokens: 15,
+                            },
+                        },
+                    ],
+                },
+            }),
+        })
+        assert(outlet.data?.success, 'Outlet payload failed')
+        assert.equal(outlet.data.inputTokens, 10)
+        assert.equal(outlet.data.outputTokens, 5)
+        assert(
+            outlet.data.totalCost > 0,
+            'Outlet should calculate a positive cost'
+        )
+
+        const records = await waitForRecords()
+        const chatRecord = records.records.find(
+            (record) => record.model_name === 'gpt-4o-mini'
+        )
+        assert(chatRecord, 'Missing usage record for gpt-4o-mini')
+        assert.equal(chatRecord.input_tokens, 10)
+        assert.equal(chatRecord.output_tokens, 5)
+        assert(
+            Number(chatRecord.cost) > 0 && Number(chatRecord.cost) < 0.001,
+            `Unexpected low-cost record precision: ${chatRecord.cost}`
+        )
+
+        const balanceUpdate = await requestJson<MonitorUser>(
+            `${MONITOR_BASE_URL}/api/v1/users/${ADMIN_USER.id}/balance`,
+            {
+                method: 'PUT',
+                headers: jsonHeaders(),
+                body: JSON.stringify({ balance: 42.424242 }),
+            }
+        )
+        assert.equal(
+            Number(balanceUpdate.data?.balance),
+            42.424242,
+            'Balance update API failed'
+        )
+
+        const resetUsedBalance = await requestJson<{
+            success: boolean
+            user: MonitorUser
+        }>(
+            `${MONITOR_BASE_URL}/api/v1/users/${ADMIN_USER.id}/used-balance/reset`,
+            {
+                method: 'POST',
+                headers: authHeaders(),
+            }
+        )
+        assert(resetUsedBalance.data?.success, 'Used balance reset failed')
+        assert.equal(Number(resetUsedBalance.data.user.used_balance), 0)
+
+        logStep('Checking monitor pages in Chromium')
+        const chromiumChecks = await runChromiumChecks()
+
+        const summary = {
+            date: new Date().toISOString(),
+            urls: {
+                mock_openwebui: OWU_BASE_URL,
+                monitor: MONITOR_BASE_URL,
+            },
+            openwebui_interface_checks: {
+                models: true,
+                model_icon: true,
+                users: true,
+                chat_completions: true,
+            },
+            user_sync: {
+                rename_verified: true,
+                removal_verified: true,
+                default_order_matches_openwebui: true,
+                hidden_locally_after_delete:
+                    hiddenUser.exists_in_openwebui === false,
+            },
+            records: {
+                chat: {
+                    model: chatRecord.model_name,
+                    input_tokens: chatRecord.input_tokens,
+                    output_tokens: chatRecord.output_tokens,
+                    cost: Number(chatRecord.cost),
+                },
+            },
+            screenshots: chromiumChecks.screenshots,
+        }
+
+        const summaryPath = path.join(ARTIFACTS_DIR, 'summary.json')
+        await fs.writeFile(summaryPath, JSON.stringify(summary, null, 4))
+
+        logStep(`E2E summary written to ${summaryPath}`)
+        console.log(JSON.stringify(summary, null, 4))
+    } finally {
+        await cleanup.runAll()
+    }
+}
+
+main().catch((error) => {
+    console.error('[monitor-e2e] Test run failed:', error)
+    process.exit(1)
+})

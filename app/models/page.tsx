@@ -224,6 +224,7 @@ const TestProgressPanel = ({
                                                     alt={model.name}
                                                     width={24}
                                                     height={24}
+                                                    unoptimized
                                                     className="rounded-full"
                                                 />
                                                 <div className="flex-1 min-w-0">
@@ -523,6 +524,7 @@ export default function ModelsPage() {
                                 alt={record.name}
                                 width={32}
                                 height={32}
+                                unoptimized
                                 className="rounded-full object-cover"
                             />
                         )}

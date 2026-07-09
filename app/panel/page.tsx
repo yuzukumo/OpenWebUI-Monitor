@@ -68,14 +68,16 @@ interface TableParams {
     filters?: Record<string, FilterValue | null>
 }
 
+function getCurrentMonthRange(): [Date, Date] {
+    return [dayjs().startOf('month').toDate(), dayjs().endOf('month').toDate()]
+}
+
 export default function PanelPage() {
     const { t } = useTranslation('common')
     const [loading, setLoading] = useState(true)
     const [tableLoading, setTableLoading] = useState(true)
-    const [dateRange, setDateRange] = useState<[Date, Date]>([
-        new Date(),
-        new Date(),
-    ])
+    const [dateRange, setDateRange] =
+        useState<[Date, Date]>(getCurrentMonthRange)
     const [availableTimeRange, setAvailableTimeRange] = useState<{
         minTime: Date
         maxTime: Date
@@ -105,7 +107,7 @@ export default function PanelPage() {
             model_name: null,
         },
     })
-    const [timeRangeType, setTimeRangeType] = useState<TimeRangeType>('all')
+    const [timeRangeType, setTimeRangeType] = useState<TimeRangeType>('month')
 
     const fetchUsageData = async (range: [Date, Date]) => {
         setLoading(true)
@@ -220,12 +222,12 @@ export default function PanelPage() {
             const maxTime = dayjs(data.timeRange.maxTime).endOf('day').toDate()
             setAvailableTimeRange({ minTime, maxTime })
 
-            const allTimeRange: [Date, Date] = [minTime, maxTime]
-            setDateRange(allTimeRange)
-            setTimeRangeType('all')
+            const monthTimeRange = getCurrentMonthRange()
+            setDateRange(monthTimeRange)
+            setTimeRangeType('month')
 
-            await fetchUsageData(allTimeRange)
-            await fetchRecords(tableParams, allTimeRange)
+            await fetchUsageData(monthTimeRange)
+            await fetchRecords(tableParams, monthTimeRange)
         }
 
         loadInitialData()
@@ -516,18 +518,16 @@ export default function PanelPage() {
                                                             'panel.report.spentAmount',
                                                             {
                                                                 amount: formatMoney(
-                                                                    usageData.users
-                                                                        .reduce(
-                                                                            (
-                                                                                prev,
-                                                                                current
-                                                                            ) =>
-                                                                                current.total_cost >
-                                                                                prev.total_cost
-                                                                                    ? current
-                                                                                    : prev
-                                                                        )
-                                                                        .total_cost
+                                                                    usageData.users.reduce(
+                                                                        (
+                                                                            prev,
+                                                                            current
+                                                                        ) =>
+                                                                            current.total_cost >
+                                                                            prev.total_cost
+                                                                                ? current
+                                                                                : prev
+                                                                    ).total_cost
                                                                 ),
                                                             }
                                                         )

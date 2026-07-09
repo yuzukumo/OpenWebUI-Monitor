@@ -1,6 +1,6 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'antd/dist/reset.css' layer(vendor);
+@import 'tailwindcss';
+@config '../tailwind.config.mjs';
 
 body {
     font-family:

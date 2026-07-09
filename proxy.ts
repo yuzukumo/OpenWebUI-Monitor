@@ -7,6 +7,10 @@ const ACCESS_TOKEN = process.env.ACCESS_TOKEN
 export async function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl
 
+    if (pathname.startsWith('/api/v1/models/icon')) {
+        return NextResponse.next()
+    }
+
     if (
         pathname.startsWith('/api/v1/inlet') ||
         pathname.startsWith('/api/v1/outlet') ||

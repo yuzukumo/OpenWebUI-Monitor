@@ -1,4 +1,4 @@
-FROM node:24-alpine AS base
+FROM node:24.18.0-alpine AS base
 
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
@@ -20,7 +20,7 @@ RUN apk add --no-cache \
     gcc \
     libc-dev
 
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --prefer-offline
@@ -33,7 +33,7 @@ COPY . .
 
 RUN pnpm build
 
-FROM node:24-alpine AS runner
+FROM node:24.18.0-alpine AS runner
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

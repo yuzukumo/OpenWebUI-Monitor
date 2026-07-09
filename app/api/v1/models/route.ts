@@ -6,13 +6,11 @@ export const dynamic = 'force-dynamic'
 
 interface ModelInfo {
     id: string
-    base_model_id: string
+    base_model_id?: string
     name: string
-    params: {
+    updated_at?: string | number
+    params?: {
         system: string
-    }
-    meta: {
-        profile_image_url: string
     }
 }
 
@@ -20,8 +18,19 @@ interface ModelResponse {
     data: {
         id: string
         name: string
-        info: ModelInfo
+        updated_at?: string | number
+        info?: ModelInfo
     }[]
+}
+
+function buildModelIconUrl(modelId: string, updatedAt?: string | number) {
+    const params = new URLSearchParams({ id: modelId })
+
+    if (updatedAt !== undefined && updatedAt !== null) {
+        params.set('v', String(updatedAt))
+    }
+
+    return `/api/v1/models/icon?${params.toString()}`
 }
 
 export async function GET(req: Request) {
@@ -70,11 +79,13 @@ export async function GET(req: Request) {
 
         const apiModelsMap = new Map()
         data.data.forEach((item) => {
+            const id = String(item.id)
+            const updatedAt = item.info?.updated_at ?? item.updated_at
+
             apiModelsMap.set(String(item.id), {
-                name: String(item.name),
+                name: String(item.name ?? item.id),
                 base_model_id: item.info?.base_model_id || '',
-                imageUrl:
-                    item.info?.meta?.profile_image_url || '/static/favicon.png',
+                imageUrl: buildModelIconUrl(id, updatedAt),
                 system_prompt: item.info?.params?.system || '',
             })
         })
@@ -160,8 +171,6 @@ export async function POST(req: Request) {
         return authError
     }
 
-    const data = await req.json()
-
     return new Response('Inlet placeholder response', {
         headers: { 'Content-Type': 'application/json' },
     })
@@ -172,8 +181,6 @@ export async function PUT(req: Request) {
     if (authError) {
         return authError
     }
-
-    const data = await req.json()
 
     return new Response('Outlet placeholder response', {
         headers: { 'Content-Type': 'application/json' },
