@@ -76,8 +76,12 @@ export async function POST(req: Request) {
                 for (const price of data.data.model_prices) {
                     await query(
                         `INSERT INTO model_prices (
-              id, name, base_model_id, input_price, output_price, per_msg_price, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, CURRENT_TIMESTAMP))`,
+              id, name, base_model_id, input_price, output_price,
+              per_msg_price, price_multiplier, billing_mode, updated_at
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7, $8,
+              COALESCE($9, CURRENT_TIMESTAMP)
+            )`,
                         [
                             price.id,
                             price.name,
@@ -85,6 +89,13 @@ export async function POST(req: Request) {
                             price.input_price,
                             price.output_price,
                             price.per_msg_price ?? -1,
+                            price.price_multiplier ?? 1,
+                            price.billing_mode === 'token' ||
+                            price.billing_mode === 'request'
+                                ? price.billing_mode
+                                : Number(price.per_msg_price) >= 0
+                                  ? 'request'
+                                  : 'token',
                             price.updated_at ?? null,
                         ],
                         client

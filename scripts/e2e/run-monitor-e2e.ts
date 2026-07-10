@@ -59,6 +59,20 @@ interface MonitorRecordsResponse {
     models: string[]
 }
 
+interface MonitorModelPricing {
+    id: string
+    imageUrl?: string
+    base_model_id?: string
+    input_price: number
+    output_price: number
+    per_msg_price: number
+    price_multiplier: number
+    billing_mode: 'token' | 'request'
+    effective_input_price: number
+    effective_output_price: number
+    effective_per_msg_price: number
+}
+
 interface DatabaseExportPayload {
     data: {
         users: MonitorUser[]
@@ -417,6 +431,72 @@ async function waitForPostgresContainer() {
     throw new Error('Timed out waiting for PostgreSQL readiness')
 }
 
+async function seedLegacyModelPricingSchema() {
+    const sql = `
+        CREATE TABLE IF NOT EXISTS model_prices (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            base_model_id TEXT,
+            input_price NUMERIC(10, 6) DEFAULT 60,
+            output_price NUMERIC(10, 6) DEFAULT 60,
+            per_msg_price NUMERIC(10, 6) DEFAULT -1,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        INSERT INTO model_prices (
+            id, name, base_model_id, input_price, output_price, per_msg_price
+        ) VALUES
+            ('gpt-4o-mini', 'gpt-4o-mini', NULL, 7, 9, -1),
+            (
+                'custom.gpt-4o-mini',
+                'Custom GPT-4o Mini',
+                'gpt-4o-mini',
+                0.3,
+                0.6,
+                0.125
+            )
+        ON CONFLICT (id) DO NOTHING;
+    `
+
+    const startedAt = Date.now()
+    let lastError: unknown = null
+
+    while (Date.now() - startedAt < 60_000) {
+        try {
+            await runCommand(
+                DOCKER_BIN,
+                [
+                    'exec',
+                    POSTGRES_CONTAINER_NAME,
+                    'psql',
+                    '-v',
+                    'ON_ERROR_STOP=1',
+                    '-U',
+                    'postgres',
+                    '-d',
+                    'openwebui_monitor',
+                    '-c',
+                    sql,
+                ],
+                {
+                    logFilePath: path.join(
+                        LOGS_DIR,
+                        'postgres-legacy-schema.log'
+                    ),
+                }
+            )
+            return
+        } catch (error) {
+            lastError = error
+            await sleep(500)
+        }
+    }
+
+    throw new Error(
+        `Failed to seed legacy pricing schema: ${String(lastError)}`
+    )
+}
+
 function sendJson(response: ServerResponse, status: number, payload: unknown) {
     response.statusCode = status
     response.setHeader('Content-Type', 'application/json')
@@ -637,7 +717,10 @@ async function fetchDatabaseExport() {
     return data
 }
 
-async function waitForRecords() {
+async function waitForRecords(
+    predicate: (record: MonitorRecord) => boolean = (record) =>
+        record.model_name === 'gpt-4o-mini'
+) {
     const startedAt = Date.now()
     let lastRecords: MonitorRecordsResponse | null = null
 
@@ -652,9 +735,7 @@ async function waitForRecords() {
         assert(data, 'Missing usage records response')
         lastRecords = data
 
-        if (
-            data.records.some((record) => record.model_name === 'gpt-4o-mini')
-        ) {
+        if (data.records.some(predicate)) {
             return data
         }
 
@@ -850,12 +931,210 @@ async function runChromiumChecks() {
         })
         await waitForVisibleText(page, 'Model Management')
         await waitForVisibleText(page, 'gpt-4o-mini')
+        await waitForVisibleText(page, 'Billing Method')
+        await waitForVisibleText(page, 'Price Configuration')
+        await waitForVisibleText(page, 'Input Guide')
         await assertDarkActionButtonIsReadable(page, 'Test All Models')
         await assertDarkActionButtonIsReadable(page, 'Sync All Derived Models')
         await waitForLoadedImageAlt(page, 'gpt-4o-mini')
+
+        const tokenRow = page.locator('tr[data-row-key="gpt-4o-mini"]')
+        const requestRow = page.locator('tr[data-row-key="custom.gpt-4o-mini"]')
+        assert.equal(await tokenRow.count(), 1, 'Missing token billing row')
+        assert.equal(await requestRow.count(), 1, 'Missing request billing row')
+        assert(
+            (await tokenRow.innerText()).includes('Token Based'),
+            'Token billing mode is not selected'
+        )
+        assert(
+            (await requestRow.innerText()).includes('Per Request'),
+            'Per-request billing mode is not selected'
+        )
+        assert.equal(
+            await tokenRow.locator('[data-price-field="input_price"]').count(),
+            1
+        )
+        assert.equal(
+            await tokenRow.locator('[data-price-field="output_price"]').count(),
+            1
+        )
+        assert.equal(
+            await tokenRow
+                .locator('[data-price-field="price_multiplier"]')
+                .count(),
+            1
+        )
+        assert.equal(
+            await tokenRow
+                .locator('[data-price-field="per_msg_price"]')
+                .count(),
+            0
+        )
+        assert.equal(
+            await requestRow
+                .locator('[data-price-field="per_msg_price"]')
+                .count(),
+            1
+        )
+        assert.equal(
+            await requestRow
+                .locator('[data-price-field="input_price"]')
+                .count(),
+            0
+        )
+        assert.equal(
+            await requestRow
+                .locator('[data-price-field="price_multiplier"]')
+                .count(),
+            0
+        )
+
+        const inputGuideField = tokenRow.locator(
+            '[data-price-field="input_price"]'
+        )
+        assert.equal(
+            await inputGuideField
+                .locator('[data-effective-price="input_price"]')
+                .innerText(),
+            '1.500000',
+            'Token guide price does not show its multiplied price'
+        )
+        const textDecoration = await inputGuideField
+            .locator('.group')
+            .evaluate(
+                (node) => window.getComputedStyle(node).textDecorationLine
+            )
+        assert(
+            textDecoration.includes('line-through'),
+            `Multiplied guide price should be struck through; got ${textDecoration}`
+        )
+
+        const modelsUrl = page.url()
+        const multiplierField = tokenRow.locator(
+            '[data-price-field="price_multiplier"]'
+        )
+        await multiplierField.locator('.group').click()
+        const multiplierInput = multiplierField.locator('input')
+        await multiplierInput.fill('1.25')
+        const updateResponsePromise = page.waitForResponse(
+            (response) =>
+                response.url().endsWith('/api/v1/models/price') &&
+                response.request().method() === 'POST'
+        )
+        await multiplierInput.press('Enter')
+        const updateResponse = await updateResponsePromise
+        assert(updateResponse.ok(), 'Multiplier UI update failed')
+        await page.waitForFunction(() => {
+            const effectivePrice = document.querySelector(
+                'tr[data-row-key="gpt-4o-mini"] [data-effective-price="input_price"]'
+            )
+            return effectivePrice?.textContent?.trim() === '1.250000'
+        })
+        assert.equal(
+            page.url(),
+            modelsUrl,
+            'Multiplier update reloaded the page'
+        )
+
+        const imageModelRow = page.locator('tr[data-row-key="gpt-image-1"]')
+        assert.equal(await imageModelRow.count(), 1, 'Missing image model row')
+        await imageModelRow.getByText('Per Request', { exact: true }).click()
+        const draftRequestPrice = imageModelRow.locator(
+            '[data-price-field="per_msg_price"] input'
+        )
+        await draftRequestPrice.waitFor({ state: 'visible' })
+        await draftRequestPrice.fill('0.03')
+        const requestModeResponsePromise = page.waitForResponse(
+            (response) =>
+                response.url().endsWith('/api/v1/models/price') &&
+                response.request().method() === 'POST'
+        )
+        await draftRequestPrice.press('Enter')
+        const requestModeResponse = await requestModeResponsePromise
+        assert(requestModeResponse.ok(), 'Per-request mode update failed')
+        await imageModelRow
+            .locator('[data-price-field="per_msg_price"]')
+            .waitFor({ state: 'visible' })
+        assert.equal(
+            await imageModelRow
+                .locator('[data-price-field="price_multiplier"]')
+                .count(),
+            0,
+            'Per-request mode should hide multiplier controls'
+        )
+
+        const tokenModeResponsePromise = page.waitForResponse(
+            (response) =>
+                response.url().endsWith('/api/v1/models/price') &&
+                response.request().method() === 'POST'
+        )
+        await imageModelRow.getByText('Token Based', { exact: true }).click()
+        const tokenModeResponse = await tokenModeResponsePromise
+        assert(tokenModeResponse.ok(), 'Token billing mode update failed')
+        await imageModelRow
+            .locator('[data-price-field="price_multiplier"]')
+            .waitFor({ state: 'visible' })
+        assert.equal(
+            await imageModelRow
+                .locator('[data-price-field="per_msg_price"]')
+                .count(),
+            0,
+            'Token mode should hide the per-request price control'
+        )
+        assert.equal(
+            page.url(),
+            modelsUrl,
+            'Billing mode update reloaded the page'
+        )
+
         screenshots.models = path.join(SCREENSHOTS_DIR, 'models.png')
         await page.screenshot({ path: screenshots.models, fullPage: true })
         await assertTailwindStylesApplied(page)
+
+        const mobilePage = await context.newPage()
+        await mobilePage.setViewportSize({ width: 390, height: 844 })
+        await mobilePage.goto(`${MONITOR_BASE_URL}/models`, {
+            waitUntil: 'networkidle',
+        })
+        await waitForVisibleText(mobilePage, 'Model Management')
+        await waitForLoadedImageAlt(mobilePage, 'gpt-4o-mini')
+        const tokenCard = mobilePage.locator('[data-model-id="gpt-4o-mini"]')
+        const requestCard = mobilePage.locator(
+            '[data-model-id="custom.gpt-4o-mini"]'
+        )
+        assert.equal(await tokenCard.count(), 1, 'Missing mobile token card')
+        assert.equal(
+            await requestCard.count(),
+            1,
+            'Missing mobile request card'
+        )
+        assert.equal(
+            await tokenCard
+                .locator('[data-price-field="price_multiplier"]')
+                .count(),
+            1
+        )
+        assert.equal(
+            await requestCard
+                .locator('[data-price-field="per_msg_price"]')
+                .count(),
+            1
+        )
+        assert.equal(
+            await requestCard
+                .locator('[data-price-field="price_multiplier"]')
+                .count(),
+            0
+        )
+        screenshots.models_mobile = path.join(
+            SCREENSHOTS_DIR,
+            'models-mobile.png'
+        )
+        await mobilePage.screenshot({
+            path: screenshots.models_mobile,
+            fullPage: true,
+        })
+        await mobilePage.close()
 
         await page.goto(`${MONITOR_BASE_URL}/users`, {
             waitUntil: 'networkidle',
@@ -938,6 +1217,8 @@ async function main() {
         )
         await waitForTcpPort('127.0.0.1', POSTGRES_PORT)
         await waitForPostgresContainer()
+        logStep('Seeding legacy model pricing schema')
+        await seedLegacyModelPricingSchema()
 
         if (process.env.E2E_SKIP_BUILD !== '1') {
             logStep('Building monitor application')
@@ -968,11 +1249,12 @@ async function main() {
         await waitForHttp(`${MONITOR_BASE_URL}/token`)
 
         logStep('Checking monitor -> OpenWebUI model interfaces')
-        const { data: models } = await requestJson<
-            Array<{ id: string; imageUrl: string; base_model_id?: string }>
-        >(`${MONITOR_BASE_URL}/api/v1/models`, {
-            headers: authHeaders(),
-        })
+        const { data: models } = await requestJson<MonitorModelPricing[]>(
+            `${MONITOR_BASE_URL}/api/v1/models`,
+            {
+                headers: authHeaders(),
+            }
+        )
 
         assert(models, 'Missing models response')
         assert(
@@ -987,6 +1269,26 @@ async function main() {
             ),
             'Missing derived model base_model_id mapping'
         )
+        const initialBaseModel = models.find(
+            (model) => model.id === 'gpt-4o-mini'
+        )
+        const initialDerivedModel = models.find(
+            (model) => model.id === 'custom.gpt-4o-mini'
+        )
+        assert(initialBaseModel, 'Missing base model pricing data')
+        assert(initialDerivedModel, 'Missing derived model pricing data')
+        assert.equal(initialBaseModel.billing_mode, 'token')
+        assert.equal(Number(initialBaseModel.price_multiplier), 1)
+        assert.equal(Number(initialBaseModel.input_price), 7)
+        assert.equal(Number(initialBaseModel.output_price), 9)
+        assert.equal(
+            Number(initialBaseModel.effective_input_price),
+            Number(initialBaseModel.input_price)
+        )
+        assert.equal(initialDerivedModel.billing_mode, 'request')
+        assert.equal(Number(initialDerivedModel.price_multiplier), 1)
+        assert.equal(Number(initialDerivedModel.per_msg_price), 0.125)
+        assert.equal(Number(initialDerivedModel.effective_per_msg_price), 0.125)
         assertAuthorizedOpenWebUIRequest(
             mockOpenWebUI.state,
             'GET',
@@ -1089,7 +1391,10 @@ async function main() {
         logStep('Checking billing inlet/outlet and monitor records')
         const priceUpdate = await requestJson<{
             success: boolean
-            results: Array<{ success: boolean }>
+            results: Array<{
+                success: boolean
+                data?: MonitorModelPricing
+            }>
         }>(`${MONITOR_BASE_URL}/api/v1/models/price`, {
             method: 'POST',
             headers: jsonHeaders(),
@@ -1098,8 +1403,10 @@ async function main() {
                     {
                         id: 'gpt-4o-mini',
                         input_price: 1,
-                        output_price: 1,
+                        output_price: 2,
                         per_msg_price: -1,
+                        price_multiplier: 1.5,
+                        billing_mode: 'token',
                     },
                 ],
             }),
@@ -1109,6 +1416,28 @@ async function main() {
             priceUpdate.data.results[0]?.success,
             'Model price update result failed'
         )
+        const updatedBaseModel = priceUpdate.data.results[0].data
+        assert(updatedBaseModel, 'Missing updated model pricing data')
+        assert.equal(updatedBaseModel.billing_mode, 'token')
+        assert.equal(Number(updatedBaseModel.price_multiplier), 1.5)
+        assert.equal(Number(updatedBaseModel.effective_input_price), 1.5)
+        assert.equal(Number(updatedBaseModel.effective_output_price), 3)
+
+        const syncPrices = await requestJson<{
+            success: boolean
+            syncedModels: Array<MonitorModelPricing & { success: boolean }>
+        }>(`${MONITOR_BASE_URL}/api/v1/models/sync-all-prices`, {
+            method: 'POST',
+            headers: jsonHeaders(),
+        })
+        assert(syncPrices.data?.success, 'Derived model price sync failed')
+        const syncedDerivedModel = syncPrices.data.syncedModels.find(
+            (model) => model.id === 'custom.gpt-4o-mini'
+        )
+        assert(syncedDerivedModel?.success, 'Derived model was not synced')
+        assert.equal(syncedDerivedModel.billing_mode, 'token')
+        assert.equal(Number(syncedDerivedModel.price_multiplier), 1.5)
+        assert.equal(Number(syncedDerivedModel.effective_output_price), 3)
 
         const sparseInlet = await requestJson<{ success: boolean }>(
             `${MONITOR_BASE_URL}/api/v1/inlet`,
@@ -1172,8 +1501,8 @@ async function main() {
         assert.equal(outlet.data.inputTokens, 10)
         assert.equal(outlet.data.outputTokens, 5)
         assert(
-            outlet.data.totalCost > 0,
-            'Outlet should calculate a positive cost'
+            Math.abs(outlet.data.totalCost - 0.00003) < 0.0000000001,
+            `Unexpected token billing cost: ${outlet.data.totalCost}`
         )
 
         const records = await waitForRecords()
@@ -1183,10 +1512,93 @@ async function main() {
         assert(chatRecord, 'Missing usage record for gpt-4o-mini')
         assert.equal(chatRecord.input_tokens, 10)
         assert.equal(chatRecord.output_tokens, 5)
-        assert(
-            Number(chatRecord.cost) > 0 && Number(chatRecord.cost) < 0.001,
-            `Unexpected low-cost record precision: ${chatRecord.cost}`
+        assert.equal(
+            Number(chatRecord.cost),
+            0.00003,
+            `Unexpected token billing record cost: ${chatRecord.cost}`
         )
+
+        const requestPriceUpdate = await requestJson<{
+            success: boolean
+            results: Array<{
+                success: boolean
+                data?: MonitorModelPricing
+            }>
+        }>(`${MONITOR_BASE_URL}/api/v1/models/price`, {
+            method: 'POST',
+            headers: jsonHeaders(),
+            body: JSON.stringify({
+                updates: [
+                    {
+                        id: 'custom.gpt-4o-mini',
+                        input_price: 1,
+                        output_price: 2,
+                        per_msg_price: 0.02,
+                        price_multiplier: 10,
+                        billing_mode: 'request',
+                    },
+                ],
+            }),
+        })
+        const requestPricedModel = requestPriceUpdate.data?.results[0]?.data
+        assert(requestPricedModel, 'Per-request model price update failed')
+        assert.equal(requestPricedModel.billing_mode, 'request')
+        assert.equal(Number(requestPricedModel.effective_per_msg_price), 0.02)
+
+        const requestOutlet = await requestJson<{
+            success: boolean
+            inputTokens: number
+            outputTokens: number
+            totalCost: number
+        }>(`${MONITOR_BASE_URL}/api/v1/outlet`, {
+            method: 'POST',
+            headers: jsonHeaders(MONITOR_API_KEY),
+            body: JSON.stringify({
+                user: ADMIN_USER,
+                metadata: {
+                    user_id: ADMIN_USER.id,
+                },
+                body: {
+                    model: 'custom.gpt-4o-mini',
+                    messages: [
+                        {
+                            role: 'user',
+                            content: 'Fixed price request',
+                        },
+                        {
+                            role: 'assistant',
+                            content: 'Fixed price response',
+                            usage: {
+                                input_tokens: 2,
+                                output_tokens: 1,
+                                total_tokens: 3,
+                            },
+                        },
+                    ],
+                },
+            }),
+        })
+        assert(requestOutlet.data?.success, 'Per-request outlet failed')
+        assert.equal(
+            requestOutlet.data.totalCost,
+            0.02,
+            'Per-request billing must ignore the token multiplier'
+        )
+
+        const recordsWithRequestBilling = await waitForRecords(
+            (record) =>
+                record.model_name === 'custom.gpt-4o-mini' &&
+                record.input_tokens === 2 &&
+                record.output_tokens === 1
+        )
+        const requestRecord = recordsWithRequestBilling.records.find(
+            (record) =>
+                record.model_name === 'custom.gpt-4o-mini' &&
+                record.input_tokens === 2 &&
+                record.output_tokens === 1
+        )
+        assert(requestRecord, 'Missing per-request usage record')
+        assert.equal(Number(requestRecord.cost), 0.02)
 
         const balanceUpdate = await requestJson<MonitorUser>(
             `${MONITOR_BASE_URL}/api/v1/users/${ADMIN_USER.id}/balance`,
@@ -1243,6 +1655,12 @@ async function main() {
                     input_tokens: chatRecord.input_tokens,
                     output_tokens: chatRecord.output_tokens,
                     cost: Number(chatRecord.cost),
+                },
+                per_request: {
+                    model: requestRecord.model_name,
+                    input_tokens: requestRecord.input_tokens,
+                    output_tokens: requestRecord.output_tokens,
+                    cost: Number(requestRecord.cost),
                 },
             },
             screenshots: chromiumChecks.screenshots,

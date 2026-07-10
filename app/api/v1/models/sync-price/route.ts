@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { pool } from '@/lib/db/client'
+import { mapModelPriceRow, pool } from '@/lib/db/client'
 import { verifyApiToken } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
@@ -58,7 +58,10 @@ export async function POST(request: NextRequest) {
             }
 
             const baseModelResult = await client.query(
-                `SELECT input_price, output_price, per_msg_price FROM model_prices WHERE id = $1`,
+                `SELECT input_price, output_price, per_msg_price,
+                        price_multiplier, billing_mode
+                 FROM model_prices
+                 WHERE id = $1`,
                 [baseModelId]
             )
 
@@ -77,6 +80,8 @@ export async function POST(request: NextRequest) {
            input_price = $2,
            output_price = $3,
            per_msg_price = $4,
+           price_multiplier = $5,
+           billing_mode = $6,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = $1
          RETURNING *`,
@@ -85,22 +90,20 @@ export async function POST(request: NextRequest) {
                     baseModel.input_price,
                     baseModel.output_price,
                     baseModel.per_msg_price,
+                    baseModel.price_multiplier,
+                    baseModel.billing_mode,
                 ]
             )
 
             const updatedModel = updateResult.rows[0]
+            const modelPrice = mapModelPriceRow(updatedModel)
 
             return NextResponse.json({
                 success: true,
                 message: `Successfully synced prices from ${baseModelId} to ${modelId}`,
                 data: {
-                    id: updatedModel.id,
-                    name: updatedModel.name,
+                    ...modelPrice,
                     base_model_id: baseModelId,
-                    input_price: Number(updatedModel.input_price),
-                    output_price: Number(updatedModel.output_price),
-                    per_msg_price: Number(updatedModel.per_msg_price),
-                    updated_at: updatedModel.updated_at,
                 },
             })
         } finally {

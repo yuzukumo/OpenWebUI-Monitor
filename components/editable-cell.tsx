@@ -24,6 +24,8 @@ interface EditableCellProps {
         maxValue?: number
     }
     isPerMsgPrice?: boolean
+    suffix?: string
+    strikeThrough?: boolean
 }
 
 export function EditableCell({
@@ -36,8 +38,10 @@ export function EditableCell({
     disabled = false,
     tooltipText,
     placeholder,
-    validateValue = (value) => ({ isValid: true }),
+    validateValue = () => ({ isValid: true }),
     isPerMsgPrice = false,
+    suffix,
+    strikeThrough = false,
 }: EditableCellProps) {
     const numericValue = typeof value === 'number' ? value : Number(value)
     const originalValue = numericValue >= 0 ? formatMoney(numericValue) : ''
@@ -88,7 +92,7 @@ export function EditableCell({
             }
 
             await onSubmit(numValue)
-        } catch (err) {
+        } catch {
         } finally {
             setIsSaving(false)
         }
@@ -126,6 +130,13 @@ export function EditableCell({
               focus:!ring-offset-0
             "
                         placeholder={placeholder || t('common.enterValue')}
+                        suffix={
+                            suffix ? (
+                                <span className="text-xs text-muted-foreground">
+                                    {suffix}
+                                </span>
+                            ) : undefined
+                        }
                         onPressEnter={handleSubmit}
                         autoFocus
                         disabled={isSaving}
@@ -177,7 +188,9 @@ export function EditableCell({
             ${
                 disabled
                     ? 'cursor-not-allowed line-through'
-                    : 'cursor-pointer hover:bg-primary/5'
+                    : `cursor-pointer hover:bg-primary/5 ${
+                          strikeThrough ? 'line-through' : ''
+                      }`
             }
           `}
                 >
@@ -201,6 +214,11 @@ export function EditableCell({
                         ) : (
                             <>
                                 {formatMoney(numericValue)}
+                                {suffix && (
+                                    <span className="ml-0.5 text-muted-foreground">
+                                        {suffix}
+                                    </span>
+                                )}
                                 {tooltipText && (
                                     <Tooltip title={tooltipText}>
                                         <InfoCircleOutlined className="ml-1 text-muted-foreground/60" />

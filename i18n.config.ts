@@ -4,7 +4,6 @@ import LanguageDetector from 'i18next-browser-languagedetector'
 
 import enCommon from '@/locales/en/common.json'
 import zhCommon from '@/locales/zh/common.json'
-import esCommon from '@/locales/es/common.json'
 
 i18n.use(LanguageDetector)
     .use(initReactI18next)
@@ -16,10 +15,8 @@ i18n.use(LanguageDetector)
             zh: {
                 common: zhCommon,
             },
-            es: {
-                common: esCommon,
-            },
         },
+        supportedLngs: ['en', 'zh'],
         fallbackLng: 'zh',
         interpolation: {
             escapeValue: false,

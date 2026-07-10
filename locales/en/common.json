@@ -83,7 +83,7 @@
 
     "models": {
         "title": "Model Management",
-        "description": "Manage price configurations for all available models.",
+        "description": "Choose token-based or per-request billing for each model and configure its price.",
         "testAll": "Test All Models",
         "exportConfig": "Export",
         "importConfig": "Import",
@@ -97,7 +97,7 @@
         "baseModelNotFound": "Base model not found",
         "noDerivedModels": "No derived models found",
         "syncing": "Syncing",
-        "syncTooltip": "Sync prices from base models to all derived models. This will update prices of all derived models based on their base model prices.",
+        "syncTooltip": "Sync billing mode, prices, and multiplier from base models to all derived models.",
         "testTooltip": "Click model icon to test individually, test results will be shown in the top right corner of the icon.",
         "test": {
             "status": {
@@ -119,18 +119,18 @@
         },
         "table": {
             "name": "Model",
-            "inputPrice": "Input Price $ / M tokens",
-            "outputPrice": "Output Price $ / M tokens",
-            "perMsgPrice": "Per Message Price $ / Message",
-            "notSet": "Not Set",
-            "mobile": {
-                "inputPrice": "Input Price",
-                "outputPrice": "Output Price",
-                "perMsgPrice": "Per Message"
+            "billingMode": "Billing Method",
+            "billingModes": {
+                "token": "Token Based",
+                "request": "Per Request"
             },
-            "perMsgPriceTooltip": "Set a negative value to charge by tokens instead of per message",
+            "priceConfiguration": "Price Configuration",
+            "inputPrice": "Input Guide $ / M tokens",
+            "outputPrice": "Output Guide $ / M tokens",
+            "perRequestPrice": "Per-request Price $ / Request",
+            "priceMultiplier": "Multiplier",
             "enterPrice": "Enter price",
-            "priceOverriddenByPerMsg": "Overridden by per message price"
+            "enterMultiplier": "Enter multiplier"
         },
         "testing": "Testing",
         "testComplete": "Test Complete",

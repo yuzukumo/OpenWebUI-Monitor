@@ -2,6 +2,7 @@ import { attachDatabasePool } from '@vercel/functions'
 import { Pool, PoolClient } from 'pg'
 import {
     MAX_BALANCE_MICROS,
+    applyPriceMultiplier,
     decimalToMicros,
     microsToDecimalString,
 } from '@/lib/utils/money'
@@ -327,6 +328,7 @@ export async function ensureTablesExist() {
         const defaultPerMsgPrice = parseFloat(
             process.env.DEFAULT_MODEL_PER_MSG_PRICE || '-1'
         )
+        const defaultBillingMode = defaultPerMsgPrice >= 0 ? 'request' : 'token'
 
         if (!modelPricesTableExists.rows[0].exists) {
             await query(`
@@ -334,9 +336,11 @@ export async function ensureTablesExist() {
           id TEXT PRIMARY KEY,
           name TEXT NOT NULL,
           base_model_id TEXT,
-          input_price NUMERIC(10, 6) DEFAULT ${defaultInputPrice},
-          output_price NUMERIC(10, 6) DEFAULT ${defaultOutputPrice},
-          per_msg_price NUMERIC(10, 6) DEFAULT ${defaultPerMsgPrice},
+          input_price NUMERIC(16, 6) NOT NULL DEFAULT ${defaultInputPrice},
+          output_price NUMERIC(16, 6) NOT NULL DEFAULT ${defaultOutputPrice},
+          per_msg_price NUMERIC(16, 6) NOT NULL DEFAULT ${defaultPerMsgPrice},
+          price_multiplier NUMERIC(16, 6) NOT NULL DEFAULT 1,
+          billing_mode VARCHAR(16) NOT NULL DEFAULT '${defaultBillingMode}',
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
       `)
@@ -372,6 +376,45 @@ export async function ensureTablesExist() {
             } catch (error) {
                 console.error('Error adding base_model_id column:', error)
             }
+
+            await query(`
+          ALTER TABLE model_prices
+            ALTER COLUMN input_price TYPE NUMERIC(16, 6),
+            ALTER COLUMN output_price TYPE NUMERIC(16, 6),
+            ALTER COLUMN per_msg_price TYPE NUMERIC(16, 6);
+
+          UPDATE model_prices
+             SET input_price = COALESCE(input_price, ${defaultInputPrice}),
+                 output_price = COALESCE(output_price, ${defaultOutputPrice}),
+                 per_msg_price = COALESCE(per_msg_price, ${defaultPerMsgPrice});
+
+          ALTER TABLE model_prices
+            ALTER COLUMN input_price SET NOT NULL,
+            ALTER COLUMN output_price SET NOT NULL,
+            ALTER COLUMN per_msg_price SET NOT NULL;
+        `)
+
+            await query(`
+          ALTER TABLE model_prices
+            ADD COLUMN IF NOT EXISTS price_multiplier NUMERIC(16, 6) NOT NULL DEFAULT 1;
+        `)
+
+            await query(`
+          ALTER TABLE model_prices
+            ADD COLUMN IF NOT EXISTS billing_mode VARCHAR(16);
+
+          UPDATE model_prices
+             SET billing_mode = CASE
+               WHEN per_msg_price >= 0 THEN 'request'
+               ELSE 'token'
+             END
+           WHERE billing_mode IS NULL
+              OR billing_mode NOT IN ('token', 'request');
+
+          ALTER TABLE model_prices
+            ALTER COLUMN billing_mode SET DEFAULT 'token',
+            ALTER COLUMN billing_mode SET NOT NULL;
+        `)
         }
 
         const userUsageRecordsTableExists = await query(`
@@ -505,10 +548,57 @@ export async function initDatabase() {
 export interface ModelPrice {
     id: string
     name: string
+    base_model_id: string | null
     input_price: number
     output_price: number
     per_msg_price: number
+    price_multiplier: number
+    billing_mode: BillingMode
+    effective_input_price: number
+    effective_output_price: number
+    effective_per_msg_price: number
     updated_at: Date
+}
+
+export type BillingMode = 'token' | 'request'
+
+function normalizeBillingMode(
+    value: unknown,
+    perMsgPrice: number
+): BillingMode {
+    if (value === 'token' || value === 'request') {
+        return value
+    }
+
+    return perMsgPrice >= 0 ? 'request' : 'token'
+}
+
+export function mapModelPriceRow(row: Record<string, unknown>): ModelPrice {
+    const inputPrice = Number(row.input_price)
+    const outputPrice = Number(row.output_price)
+    const perMsgPrice = Number(row.per_msg_price)
+    const priceMultiplier = Number(row.price_multiplier ?? 1)
+    const billingMode = normalizeBillingMode(row.billing_mode, perMsgPrice)
+
+    return {
+        id: String(row.id),
+        name: String(row.name),
+        base_model_id:
+            typeof row.base_model_id === 'string' ? row.base_model_id : null,
+        input_price: inputPrice,
+        output_price: outputPrice,
+        per_msg_price: perMsgPrice,
+        price_multiplier: priceMultiplier,
+        billing_mode: billingMode,
+        effective_input_price: Number(
+            applyPriceMultiplier(inputPrice, priceMultiplier)
+        ),
+        effective_output_price: Number(
+            applyPriceMultiplier(outputPrice, priceMultiplier)
+        ),
+        effective_per_msg_price: perMsgPrice,
+        updated_at: row.updated_at as Date,
+    }
 }
 
 export interface UserUsageRecord {
@@ -536,6 +626,8 @@ export async function getOrCreateModelPrices(
         const defaultPerMsgPrice = parseFloat(
             process.env.DEFAULT_MODEL_PER_MSG_PRICE || '-1'
         )
+        const defaultBillingMode: BillingMode =
+            defaultPerMsgPrice >= 0 ? 'request' : 'token'
 
         const modelIds = models.map((m) => m.id)
         const baseModelIds = models
@@ -564,10 +656,13 @@ export async function getOrCreateModelPrices(
 
         if (modelsToUpdate.length > 0) {
             for (const model of modelsToUpdate) {
-                await query(`UPDATE model_prices SET name = $2 WHERE id = $1`, [
-                    model.id,
-                    model.name,
-                ])
+                await query(
+                    `UPDATE model_prices
+                     SET name = $2,
+                         base_model_id = $3
+                     WHERE id = $1`,
+                    [model.id, model.name, model.base_model_id ?? null]
+                )
             }
         }
 
@@ -578,15 +673,21 @@ export async function getOrCreateModelPrices(
                     : null
 
                 await query(
-                    `INSERT INTO model_prices (id, name, input_price, output_price, per_msg_price)
-           VALUES ($1, $2, $3, $4, $5)
+                    `INSERT INTO model_prices (
+                       id, name, base_model_id, input_price, output_price,
+                       per_msg_price, price_multiplier, billing_mode
+                     )
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            RETURNING *`,
                     [
                         model.id,
                         model.name,
+                        model.base_model_id ?? null,
                         baseModel?.input_price ?? defaultInputPrice,
                         baseModel?.output_price ?? defaultOutputPrice,
                         baseModel?.per_msg_price ?? defaultPerMsgPrice,
+                        baseModel?.price_multiplier ?? 1,
+                        baseModel?.billing_mode ?? defaultBillingMode,
                     ]
                 )
             }
@@ -597,48 +698,49 @@ export async function getOrCreateModelPrices(
             [modelIds]
         )
 
-        return updatedModelsResult.rows.map((row) => ({
-            id: row.id,
-            name: row.name,
-            input_price: Number(row.input_price),
-            output_price: Number(row.output_price),
-            per_msg_price: Number(row.per_msg_price),
-            updated_at: row.updated_at,
-        }))
+        return updatedModelsResult.rows.map(mapModelPriceRow)
     } catch (error) {
         console.error('Error in getOrCreateModelPrices:', error)
         throw error
     }
 }
 
-export async function updateModelPrice(
-    id: string,
-    input_price: number,
-    output_price: number,
+export interface ModelPriceUpdate {
+    id: string
+    input_price: number
+    output_price: number
     per_msg_price: number
+    price_multiplier: number
+    billing_mode: BillingMode
+}
+
+export async function updateModelPrice(
+    update: ModelPriceUpdate
 ): Promise<ModelPrice | null> {
     try {
         const result = await query(
             `UPDATE model_prices 
        SET 
-         input_price = CAST($2 AS NUMERIC(10,6)),
-         output_price = CAST($3 AS NUMERIC(10,6)),
-         per_msg_price = CAST($4 AS NUMERIC(10,6)),
+         input_price = CAST($2 AS NUMERIC(16,6)),
+         output_price = CAST($3 AS NUMERIC(16,6)),
+         per_msg_price = CAST($4 AS NUMERIC(16,6)),
+         price_multiplier = CAST($5 AS NUMERIC(16,6)),
+         billing_mode = $6,
          updated_at = CURRENT_TIMESTAMP
        WHERE id = $1
        RETURNING *`,
-            [id, input_price, output_price, per_msg_price]
+            [
+                update.id,
+                update.input_price,
+                update.output_price,
+                update.per_msg_price,
+                update.price_multiplier,
+                update.billing_mode,
+            ]
         )
 
         if (result.rows[0]) {
-            return {
-                id: result.rows[0].id,
-                name: result.rows[0].model_name,
-                input_price: Number(result.rows[0].input_price),
-                output_price: Number(result.rows[0].output_price),
-                per_msg_price: Number(result.rows[0].per_msg_price),
-                updated_at: result.rows[0].updated_at,
-            }
+            return mapModelPriceRow(result.rows[0])
         }
         return null
     } catch (error) {
@@ -661,7 +763,11 @@ export async function updateUserBalance(userId: string, balance: number) {
            balance_micros = $3::BIGINT
        WHERE id = $1
        RETURNING id, email, balance, used_balance`,
-            [userId, microsToDecimalString(balanceMicros), balanceMicros.toString()]
+            [
+                userId,
+                microsToDecimalString(balanceMicros),
+                balanceMicros.toString(),
+            ]
         )
 
         return result.rows[0]

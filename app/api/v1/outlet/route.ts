@@ -5,6 +5,7 @@ import { ensureTablesExist, query, withTransaction } from '@/lib/db/client'
 import { getOrCreateUser } from '@/lib/db/users'
 import {
     MAX_BALANCE_MICROS,
+    applyPriceMultiplier,
     calculateTokenCostMicros,
     decimalToMicros,
     microsToDecimalString,
@@ -49,6 +50,8 @@ interface ModelPrice {
     input_price: number | string
     output_price: number | string
     per_msg_price: number | string
+    price_multiplier: number | string
+    billing_mode: 'token' | 'request'
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -145,7 +148,8 @@ async function getModelPrice(
     client?: PoolClient
 ): Promise<ModelPrice | null> {
     const result = await query(
-        `SELECT id, name, input_price, output_price, per_msg_price 
+        `SELECT id, name, input_price, output_price, per_msg_price,
+                price_multiplier, billing_mode
      FROM model_prices 
      WHERE id = $1`,
         [modelId],
@@ -153,7 +157,24 @@ async function getModelPrice(
     )
 
     if (result.rows[0]) {
-        return result.rows[0]
+        const row = result.rows[0]
+        const multiplier = row.price_multiplier ?? 1
+        const perMsgPrice = Number(row.per_msg_price)
+        const billingMode =
+            row.billing_mode === 'token' || row.billing_mode === 'request'
+                ? row.billing_mode
+                : perMsgPrice >= 0
+                  ? 'request'
+                  : 'token'
+
+        return {
+            ...row,
+            input_price: applyPriceMultiplier(row.input_price, multiplier),
+            output_price: applyPriceMultiplier(row.output_price, multiplier),
+            per_msg_price: row.per_msg_price,
+            price_multiplier: multiplier,
+            billing_mode: billingMode,
+        }
     }
 
     const defaultInputPrice = parseFloat(
@@ -178,6 +199,8 @@ async function getModelPrice(
         input_price: defaultInputPrice,
         output_price: defaultOutputPrice,
         per_msg_price: -1,
+        price_multiplier: 1,
+        billing_mode: 'token',
     }
 }
 
@@ -253,7 +276,12 @@ export async function POST(req: Request) {
             if (outputTokens === 0) {
                 totalCostMicros = BigInt(0)
                 console.log('No charge for zero output tokens')
-            } else if (Number(modelPrice.per_msg_price) >= 0) {
+            } else if (modelPrice.billing_mode === 'request') {
+                if (Number(modelPrice.per_msg_price) < 0) {
+                    throw new Error(
+                        `Invalid per-request price for model ${modelId}`
+                    )
+                }
                 totalCostMicros = decimalToMicros(modelPrice.per_msg_price)
                 console.log(
                     `Using fixed pricing: ${microsToDecimalString(

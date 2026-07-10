@@ -37,15 +37,6 @@ TRANSLATIONS = {
         "time_spent": "耗时: {time:.2f}s",
         "tokens_per_sec": "{tokens_per_sec:.2f} T/s",
     },
-    "es": {
-        "request_failed": "Solicitud fallida: {error_msg}",
-        "insufficient_balance": "Saldo insuficiente: Saldo actual `{balance:.6f}`",
-        "cost": "Costo: ${cost:.6f}",
-        "balance": "Saldo: ${balance:.6f}",
-        "tokens": "Tokens: {input}+{output}",
-        "time_spent": "Tiempo: {time:.2f}s",
-        "tokens_per_sec": "{tokens_per_sec:.2f} T/s",
-    },
 }
 
 
@@ -60,7 +51,7 @@ class Filter:
         )
         api_key: str = Field(default="", description="openwebui-monitor's api key")
         priority: int = Field(default=5, description="filter priority")
-        language: str = Field(default="zh", description="language (en/zh/es)")
+        language: str = Field(default="zh", description="language (en/zh)")
         show_time_spent: bool = Field(default=True, description="show time spent")
         show_tokens_per_sec: bool = Field(
             default=True, description="show tokens per second"

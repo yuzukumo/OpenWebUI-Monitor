@@ -1,9 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Table, message, Tooltip } from 'antd'
+import { Progress, Segmented, Table, message, Tooltip } from 'antd'
 import {
-    DownloadOutlined,
     ExperimentOutlined,
     CheckOutlined,
     CloseOutlined,
@@ -15,32 +14,124 @@ import Image from 'next/image'
 import { Button } from '@/components/ui/button'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
-import { Progress } from 'antd'
 import { toast, Toaster } from 'sonner'
 import { EditableCell } from '@/components/editable-cell'
+import { applyPriceMultiplier, formatMoney } from '@/lib/utils/money'
 
-interface ModelResponse {
-    id: string
-    name: string
-    base_model_id: string
-    system_prompt: string
-    imageUrl: string
+type PriceField =
+    'input_price' | 'output_price' | 'per_msg_price' | 'price_multiplier'
+
+type BillingMode = 'token' | 'request'
+type TokenGuidePriceField = 'input_price' | 'output_price'
+
+interface ModelPricing {
     input_price: number
     output_price: number
     per_msg_price: number
+    price_multiplier: number
+    billing_mode: BillingMode
+    effective_input_price: number
+    effective_output_price: number
+    effective_per_msg_price: number
 }
 
-interface Model {
+interface ModelResponse extends ModelPricing {
     id: string
     name: string
     base_model_id: string
     system_prompt: string
     imageUrl: string
-    input_price: number
-    output_price: number
-    per_msg_price: number
+}
+
+interface Model extends ModelResponse {
     testStatus?: 'success' | 'error' | 'testing'
     syncStatus?: 'syncing' | 'success' | 'error'
+}
+
+interface ModelPricingResult {
+    id: string
+    success: boolean
+    data?: Partial<ModelPricing>
+    error?: string
+}
+
+interface ModelPricingApiResponse {
+    error?: string
+    results?: ModelPricingResult[]
+}
+
+interface ModelSyncResult extends Partial<ModelPricing> {
+    id: string
+    success: boolean
+}
+
+interface ModelSyncApiResponse {
+    error?: string
+    syncedModels?: ModelSyncResult[]
+}
+
+const EFFECTIVE_PRICE_FIELDS: Record<
+    TokenGuidePriceField,
+    'effective_input_price' | 'effective_output_price'
+> = {
+    input_price: 'effective_input_price',
+    output_price: 'effective_output_price',
+}
+
+function finiteNumber(value: unknown, fallback: number): number {
+    const parsed = Number(value)
+    return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function normalizeModelPricing(pricing: Partial<ModelPricing>): ModelPricing {
+    const inputPrice = finiteNumber(pricing.input_price, 60)
+    const outputPrice = finiteNumber(pricing.output_price, 60)
+    const perMsgPrice = finiteNumber(pricing.per_msg_price, -1)
+    const priceMultiplier = finiteNumber(pricing.price_multiplier, 1)
+    const billingMode =
+        pricing.billing_mode === 'token' || pricing.billing_mode === 'request'
+            ? pricing.billing_mode
+            : perMsgPrice >= 0
+              ? 'request'
+              : 'token'
+
+    return {
+        input_price: inputPrice,
+        output_price: outputPrice,
+        per_msg_price: perMsgPrice,
+        price_multiplier: priceMultiplier,
+        billing_mode: billingMode,
+        effective_input_price: finiteNumber(
+            pricing.effective_input_price,
+            Number(applyPriceMultiplier(inputPrice, priceMultiplier))
+        ),
+        effective_output_price: finiteNumber(
+            pricing.effective_output_price,
+            Number(applyPriceMultiplier(outputPrice, priceMultiplier))
+        ),
+        effective_per_msg_price: perMsgPrice,
+    }
+}
+
+function mergeModelPricing(
+    model: Model,
+    pricing: Partial<ModelPricing>
+): Model {
+    const mergedPricing = { ...model, ...pricing }
+
+    return {
+        ...model,
+        ...normalizeModelPricing({
+            input_price: mergedPricing.input_price,
+            output_price: mergedPricing.output_price,
+            per_msg_price: mergedPricing.per_msg_price,
+            price_multiplier: mergedPricing.price_multiplier,
+            billing_mode: mergedPricing.billing_mode,
+            effective_input_price: pricing.effective_input_price,
+            effective_output_price: pricing.effective_output_price,
+            effective_per_msg_price: pricing.effective_per_msg_price,
+        }),
+    }
 }
 
 const TestStatusIndicator = ({ status }: { status: Model['testStatus'] }) => {
@@ -264,12 +355,45 @@ export default function ModelsPage() {
     const [error, setError] = useState<string | null>(null)
     const [editingCell, setEditingCell] = useState<{
         id: string
-        field: 'input_price' | 'output_price' | 'per_msg_price'
+        field: PriceField
     } | null>(null)
     const [testing, setTesting] = useState(false)
     const [apiKey, setApiKey] = useState<string | null>(null)
     const [isTestComplete, setIsTestComplete] = useState(false)
     const [syncing, setSyncing] = useState(false)
+    const [draftBillingModes, setDraftBillingModes] = useState<
+        Record<string, BillingMode>
+    >({})
+    const [updatingModelIds, setUpdatingModelIds] = useState<Set<string>>(
+        new Set()
+    )
+
+    const getDisplayedBillingMode = (model: Model): BillingMode =>
+        draftBillingModes[model.id] ?? model.billing_mode
+
+    const clearDraftBillingMode = (modelId: string) => {
+        setDraftBillingModes((current) => {
+            if (!(modelId in current)) {
+                return current
+            }
+
+            const next = { ...current }
+            delete next[modelId]
+            return next
+        })
+    }
+
+    const setModelUpdating = (modelId: string, isUpdating: boolean) => {
+        setUpdatingModelIds((current) => {
+            const next = new Set(current)
+            if (isUpdating) {
+                next.add(modelId)
+            } else {
+                next.delete(modelId)
+            }
+            return next
+        })
+    }
 
     useEffect(() => {
         const fetchModels = async () => {
@@ -287,9 +411,7 @@ export default function ModelsPage() {
                 setModels(
                     data.map((model: ModelResponse) => ({
                         ...model,
-                        input_price: model.input_price ?? 60,
-                        output_price: model.output_price ?? 60,
-                        per_msg_price: model.per_msg_price ?? -1,
+                        ...normalizeModelPricing(model),
                     }))
                 )
             } catch (err) {
@@ -304,7 +426,7 @@ export default function ModelsPage() {
         }
 
         fetchModels()
-    }, [])
+    }, [t])
 
     useEffect(() => {
         const fetchApiKey = async () => {
@@ -336,35 +458,45 @@ export default function ModelsPage() {
         }
 
         fetchApiKey()
-    }, [])
+    }, [t])
 
-    const handlePriceUpdate = async (
+    const saveModelPricing = async (
         id: string,
-        field: 'input_price' | 'output_price' | 'per_msg_price',
-        value: number
+        changes: Partial<Pick<ModelPricing, PriceField | 'billing_mode'>>
     ): Promise<void> => {
+        const model = models.find((item) => item.id === id)
+        if (!model) return
+
+        const nextPricing = {
+            input_price: finiteNumber(changes.input_price, model.input_price),
+            output_price: finiteNumber(
+                changes.output_price,
+                model.output_price
+            ),
+            per_msg_price: finiteNumber(
+                changes.per_msg_price,
+                model.per_msg_price
+            ),
+            price_multiplier: finiteNumber(
+                changes.price_multiplier,
+                model.price_multiplier
+            ),
+            billing_mode: changes.billing_mode ?? model.billing_mode,
+        }
+
+        if (
+            nextPricing.input_price < 0 ||
+            nextPricing.output_price < 0 ||
+            nextPricing.price_multiplier < 0 ||
+            (nextPricing.billing_mode === 'request' &&
+                nextPricing.per_msg_price < 0)
+        ) {
+            throw new Error(t('error.model.nonePositiveNumber'))
+        }
+
+        setModelUpdating(id, true)
+
         try {
-            const model = models.find((m) => m.id === id)
-            if (!model) return
-
-            const validValue = Number(value)
-            if (
-                field !== 'per_msg_price' &&
-                (!isFinite(validValue) || validValue < 0)
-            ) {
-                throw new Error(t('error.model.nonePositiveNumber'))
-            }
-            if (field === 'per_msg_price' && !isFinite(validValue)) {
-                throw new Error(t('error.model.invalidNumber'))
-            }
-
-            const input_price =
-                field === 'input_price' ? validValue : model.input_price
-            const output_price =
-                field === 'output_price' ? validValue : model.output_price
-            const per_msg_price =
-                field === 'per_msg_price' ? validValue : model.per_msg_price
-
             const token = localStorage.getItem('access_token')
             const response = await fetch('/api/v1/models/price', {
                 method: 'POST',
@@ -376,41 +508,32 @@ export default function ModelsPage() {
                     updates: [
                         {
                             id,
-                            input_price: Number(input_price),
-                            output_price: Number(output_price),
-                            per_msg_price: Number(per_msg_price),
+                            ...nextPricing,
                         },
                     ],
                 }),
             })
 
-            const data = await response.json()
+            const data = (await response.json()) as ModelPricingApiResponse
             if (!response.ok)
                 throw new Error(data.error || t('error.model.priceUpdateFail'))
 
-            if (data.results && data.results[0]?.success) {
+            const result = data.results?.[0]
+            const resultData = result?.data
+
+            if (result?.success && resultData) {
                 setModels((prevModels) =>
                     prevModels.map((model) =>
                         model.id === id
-                            ? {
-                                  ...model,
-                                  input_price: Number(
-                                      data.results[0].data.input_price
-                                  ),
-                                  output_price: Number(
-                                      data.results[0].data.output_price
-                                  ),
-                                  per_msg_price: Number(
-                                      data.results[0].data.per_msg_price
-                                  ),
-                              }
+                            ? mergeModelPricing(model, resultData)
                             : model
                     )
                 )
+                clearDraftBillingMode(id)
                 toast.success(t('error.model.priceUpdateSuccess'))
             } else {
                 throw new Error(
-                    data.results[0]?.error || t('error.model.priceUpdateFail')
+                    result?.error || t('error.model.priceUpdateFail')
                 )
             }
         } catch (err) {
@@ -420,7 +543,52 @@ export default function ModelsPage() {
                     : t('error.model.priceUpdateFail')
             )
             throw err
+        } finally {
+            setModelUpdating(id, false)
         }
+    }
+
+    const handlePriceUpdate = async (
+        id: string,
+        field: PriceField,
+        value: number
+    ): Promise<void> => {
+        const model = models.find((item) => item.id === id)
+        if (!model) return
+
+        const billingMode = getDisplayedBillingMode(model)
+        await saveModelPricing(id, {
+            [field]: value,
+            billing_mode: billingMode,
+        })
+    }
+
+    const handleBillingModeChange = async (
+        model: Model,
+        billingMode: BillingMode
+    ) => {
+        if (billingMode === getDisplayedBillingMode(model)) {
+            return
+        }
+
+        if (billingMode === 'request' && model.per_msg_price < 0) {
+            setDraftBillingModes((current) => ({
+                ...current,
+                [model.id]: 'request',
+            }))
+            setEditingCell({ id: model.id, field: 'per_msg_price' })
+            return
+        }
+
+        if (billingMode === model.billing_mode) {
+            clearDraftBillingMode(model.id)
+            setEditingCell(null)
+            return
+        }
+
+        try {
+            await saveModelPricing(model.id, { billing_mode: billingMode })
+        } catch {}
     }
 
     const handleTestSingleModel = async (model: Model) => {
@@ -443,7 +611,7 @@ export default function ModelsPage() {
                         : m
                 )
             )
-        } catch (error) {
+        } catch {
             setModels((prev) =>
                 prev.map((m) =>
                     m.id === model.id ? { ...m, testStatus: 'error' } : m
@@ -465,31 +633,28 @@ export default function ModelsPage() {
                 },
             })
 
-            const data = await response.json()
+            const data = (await response.json()) as ModelSyncApiResponse
 
             if (!response.ok) {
                 throw new Error(data.error || t('models.syncFail'))
             }
 
-            if (data.syncedModels && data.syncedModels.length > 0) {
+            const syncedModels = data.syncedModels ?? []
+
+            if (syncedModels.length > 0) {
                 setModels((prev) =>
                     prev.map((model) => {
-                        const syncedModel = data.syncedModels.find(
-                            (m: any) => m.id === model.id && m.success
+                        const syncedModel = syncedModels.find(
+                            (item) => item.id === model.id && item.success
                         )
                         if (syncedModel) {
-                            return {
-                                ...model,
-                                input_price: syncedModel.input_price,
-                                output_price: syncedModel.output_price,
-                                per_msg_price: syncedModel.per_msg_price,
-                            }
+                            return mergeModelPricing(model, syncedModel)
                         }
                         return model
                     })
                 )
 
-                if (data.syncedModels.every((m: any) => m.success)) {
+                if (syncedModels.every((item) => item.success)) {
                     toast.success(t('models.syncAllSuccess'))
                 } else {
                     toast.warning(t('models.syncAllFail'))
@@ -558,40 +723,19 @@ export default function ModelsPage() {
             ),
         },
         {
-            title: t('models.table.inputPrice'),
-            key: 'input_price',
-            width: 150,
-            dataIndex: 'input_price',
-            sorter: (a, b) => a.input_price - b.input_price,
+            title: t('models.table.billingMode'),
+            key: 'billing_mode',
+            width: 190,
+            dataIndex: 'billing_mode',
+            sorter: (a, b) => a.billing_mode.localeCompare(b.billing_mode),
             sortDirections: ['descend', 'ascend', 'descend'],
-            render: (_, record) => renderPriceCell('input_price', record, true),
+            render: (_, record) => renderBillingModeSelector(record),
         },
         {
-            title: t('models.table.outputPrice'),
-            key: 'output_price',
-            width: 150,
-            dataIndex: 'output_price',
-            sorter: (a, b) => a.output_price - b.output_price,
-            sortDirections: ['descend', 'ascend', 'descend'],
-            render: (_, record) =>
-                renderPriceCell('output_price', record, true),
-        },
-        {
-            title: (
-                <span>
-                    {t('models.table.perMsgPrice')}{' '}
-                    <Tooltip title={t('models.table.perMsgPriceTooltip')}>
-                        <InfoCircleOutlined className="text-gray-400 cursor-help" />
-                    </Tooltip>
-                </span>
-            ),
-            key: 'per_msg_price',
-            width: 150,
-            dataIndex: 'per_msg_price',
-            sorter: (a, b) => a.per_msg_price - b.per_msg_price,
-            sortDirections: ['descend', 'ascend', 'descend'],
-            render: (_, record) =>
-                renderPriceCell('per_msg_price', record, true),
+            title: t('models.table.priceConfiguration'),
+            key: 'price_configuration',
+            width: 560,
+            render: (_, record) => renderPriceConfiguration(record),
         },
     ]
 
@@ -601,6 +745,8 @@ export default function ModelsPage() {
             input_price: model.input_price,
             output_price: model.output_price,
             per_msg_price: model.per_msg_price,
+            price_multiplier: model.price_multiplier,
+            billing_mode: model.billing_mode,
         }))
 
         const blob = new Blob([JSON.stringify(priceData, null, 2)], {
@@ -620,19 +766,31 @@ export default function ModelsPage() {
         const reader = new FileReader()
         reader.onload = async (e) => {
             try {
-                const importedData = JSON.parse(e.target?.result as string)
+                const importedData: unknown = JSON.parse(
+                    e.target?.result as string
+                )
 
                 if (!Array.isArray(importedData)) {
                     throw new Error(t('error.model.invalidImportFormat'))
                 }
 
-                const validUpdates = importedData.filter((item) =>
-                    models.some((model) => model.id === item.id)
+                const validUpdates = importedData.filter(
+                    (item): item is Record<string, unknown> =>
+                        Boolean(item) &&
+                        typeof item === 'object' &&
+                        models.some(
+                            (model) =>
+                                model.id ===
+                                (item as Record<string, unknown>).id
+                        )
                 )
 
                 const response = await fetch('/api/v1/models/price', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+                    },
                     body: JSON.stringify({
                         updates: validUpdates,
                     }),
@@ -642,29 +800,22 @@ export default function ModelsPage() {
                     throw new Error(t('error.model.batchPriceUpdateFail'))
                 }
 
-                const data = await response.json()
+                const data = (await response.json()) as ModelPricingApiResponse
                 console.log(t('error.model.serverResponse'), data)
 
-                if (data.results) {
+                const results = data.results ?? []
+
+                if (results.length > 0) {
                     setModels((prevModels) =>
                         prevModels.map((model) => {
-                            const update = data.results.find(
-                                (r: any) =>
-                                    r.id === model.id && r.success && r.data
+                            const update = results.find(
+                                (result) =>
+                                    result.id === model.id &&
+                                    result.success &&
+                                    result.data
                             )
-                            if (update) {
-                                return {
-                                    ...model,
-                                    input_price: Number(
-                                        update.data.input_price
-                                    ),
-                                    output_price: Number(
-                                        update.data.output_price
-                                    ),
-                                    per_msg_price: Number(
-                                        update.data.per_msg_price
-                                    ),
-                                }
+                            if (update?.data) {
+                                return mergeModelPricing(model, update.data)
                             }
                             return model
                         })
@@ -673,7 +824,7 @@ export default function ModelsPage() {
 
                 message.success(
                     `${t('error.model.updateSuccess')} ${
-                        data.results.filter((r: any) => r.success).length
+                        results.filter((result) => result.success).length
                     } ${t('error.model.numberOfModelPrice')}`
                 )
             } catch (err) {
@@ -807,10 +958,9 @@ export default function ModelsPage() {
   `
 
     const MobileCard = ({ record }: { record: Model }) => {
-        const isPerMsgEnabled = record.per_msg_price >= 0
-
         return (
             <div
+                data-model-id={record.id}
                 className="p-4 sm:p-6 bg-card rounded-xl border border-border/40 
         shadow-sm hover:shadow-md transition-all duration-200 space-y-4"
             >
@@ -826,6 +976,7 @@ export default function ModelsPage() {
                                     alt={record.name}
                                     width={40}
                                     height={40}
+                                    unoptimized
                                     className="rounded-xl object-cover transition-transform group-hover:scale-105"
                                 />
                             )}
@@ -849,82 +1000,150 @@ export default function ModelsPage() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 sm:gap-4">
-                    {[
-                        {
-                            label: t('models.table.mobile.inputPrice'),
-                            field: 'input_price' as const,
-                            disabled: isPerMsgEnabled,
-                        },
-                        {
-                            label: t('models.table.mobile.outputPrice'),
-                            field: 'output_price' as const,
-                            disabled: isPerMsgEnabled,
-                        },
-                        {
-                            label: t('models.table.mobile.perMsgPrice'),
-                            field: 'per_msg_price' as const,
-                            disabled: false,
-                        },
-                    ].map(({ label, field, disabled }) => (
-                        <div
-                            key={field}
-                            className={`space-y-1.5 ${disabled ? 'opacity-50' : ''}`}
-                        >
-                            <span className="text-xs text-muted-foreground/80 block truncate">
-                                {label}
-                            </span>
-                            {renderPriceCell(field, record, false)}
-                        </div>
-                    ))}
-                </div>
+                {renderBillingModeSelector(record, true)}
+                {renderPriceConfiguration(record, true)}
             </div>
         )
     }
 
-    const renderPriceCell = (
-        field: 'input_price' | 'output_price' | 'per_msg_price',
+    const renderBillingModeSelector = (
         record: Model,
-        showTooltip: boolean = true
+        fullWidth: boolean = false
+    ) => (
+        <Segmented
+            block={fullWidth}
+            value={getDisplayedBillingMode(record)}
+            options={[
+                {
+                    label: t('models.table.billingModes.token'),
+                    value: 'token',
+                },
+                {
+                    label: t('models.table.billingModes.request'),
+                    value: 'request',
+                },
+            ]}
+            disabled={updatingModelIds.has(record.id)}
+            onChange={(value) =>
+                void handleBillingModeChange(record, value as BillingMode)
+            }
+            data-billing-mode={record.id}
+        />
+    )
+
+    const renderPriceConfiguration = (
+        record: Model,
+        mobile: boolean = false
     ) => {
+        const billingMode = getDisplayedBillingMode(record)
+
+        if (billingMode === 'request') {
+            return (
+                <div className={mobile ? 'max-w-full' : 'max-w-[220px]'}>
+                    <span className="mb-1 block text-xs text-muted-foreground/80">
+                        {t('models.table.perRequestPrice')}
+                    </span>
+                    {renderPriceCell('per_msg_price', record)}
+                </div>
+            )
+        }
+
+        const fields: Array<{
+            field: TokenGuidePriceField | 'price_multiplier'
+            label: string
+        }> = [
+            {
+                field: 'input_price',
+                label: t('models.table.inputPrice'),
+            },
+            {
+                field: 'output_price',
+                label: t('models.table.outputPrice'),
+            },
+            {
+                field: 'price_multiplier',
+                label: t('models.table.priceMultiplier'),
+            },
+        ]
+
+        return (
+            <div
+                className={
+                    mobile
+                        ? 'grid grid-cols-2 gap-3 [&>*:last-child]:col-span-2'
+                        : 'grid grid-cols-[minmax(130px,1fr)_minmax(130px,1fr)_130px] gap-4'
+                }
+            >
+                {fields.map(({ field, label }) => (
+                    <div key={field} className="min-w-0">
+                        <span className="mb-1 block text-xs text-muted-foreground/80">
+                            {label}
+                        </span>
+                        {renderPriceCell(field, record)}
+                    </div>
+                ))}
+            </div>
+        )
+    }
+
+    const renderPriceCell = (field: PriceField, record: Model) => {
         const isEditing =
             editingCell?.id === record.id && editingCell?.field === field
         const currentValue = Number(record[field])
-        const isDisabled =
-            field !== 'per_msg_price' && record.per_msg_price >= 0
+        const isTokenGuidePrice =
+            field === 'input_price' || field === 'output_price'
+        const hasMultiplier =
+            Math.abs(Number(record.price_multiplier) - 1) > 0.0000005
+        const effectivePrice = isTokenGuidePrice
+            ? Number(record[EFFECTIVE_PRICE_FIELDS[field]])
+            : null
 
         return (
-            <EditableCell
-                value={currentValue}
-                isEditing={isEditing}
-                onEdit={() => setEditingCell({ id: record.id, field })}
-                onSubmit={async (value) => {
-                    try {
-                        await handlePriceUpdate(record.id, field, value)
+            <div className="min-w-0 space-y-0.5" data-price-field={field}>
+                <EditableCell
+                    value={currentValue}
+                    isEditing={isEditing}
+                    onEdit={() => setEditingCell({ id: record.id, field })}
+                    onSubmit={async (value) => {
+                        try {
+                            await handlePriceUpdate(record.id, field, value)
+                            setEditingCell(null)
+                        } catch {}
+                    }}
+                    t={t}
+                    disabled={updatingModelIds.has(record.id)}
+                    onCancel={() => {
                         setEditingCell(null)
-                    } catch {}
-                }}
-                t={t}
-                disabled={isDisabled}
-                onCancel={() => setEditingCell(null)}
-                tooltipText={
-                    showTooltip && isDisabled
-                        ? t('models.table.priceOverriddenByPerMsg')
-                        : undefined
-                }
-                placeholder={t('models.table.enterPrice')}
-                validateValue={(value) => ({
-                    isValid:
-                        field === 'per_msg_price'
-                            ? isFinite(value)
-                            : isFinite(value) && value >= 0,
-                    errorMessage:
-                        field === 'per_msg_price'
-                            ? t('models.table.invalidNumber')
-                            : t('models.table.nonePositiveNumber'),
-                })}
-                isPerMsgPrice={field === 'per_msg_price'}
-            />
+                        if (
+                            field === 'per_msg_price' &&
+                            draftBillingModes[record.id] === 'request' &&
+                            record.billing_mode !== 'request'
+                        ) {
+                            clearDraftBillingMode(record.id)
+                        }
+                    }}
+                    placeholder={
+                        field === 'price_multiplier'
+                            ? t('models.table.enterMultiplier')
+                            : t('models.table.enterPrice')
+                    }
+                    validateValue={(value) => ({
+                        isValid: isFinite(value) && value >= 0,
+                        errorMessage: t('error.model.nonePositiveNumber'),
+                    })}
+                    isPerMsgPrice={field === 'per_msg_price'}
+                    suffix={field === 'price_multiplier' ? 'x' : undefined}
+                    strikeThrough={isTokenGuidePrice && hasMultiplier}
+                />
+                {isTokenGuidePrice && hasMultiplier && (
+                    <div
+                        className="px-2 text-[11px] leading-4 text-muted-foreground/70 whitespace-nowrap"
+                        data-effective-price={field}
+                    >
+                        {formatMoney(effectivePrice)}
+                    </div>
+                )}
+            </div>
         )
     }
 
@@ -1099,7 +1318,7 @@ export default function ModelsPage() {
                             pagination={false}
                             size="middle"
                             className={tableClassName}
-                            scroll={{ x: 500 }}
+                            scroll={{ x: 950 }}
                             rowClassName={() => 'group'}
                         />
                     )}

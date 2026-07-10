@@ -11,7 +11,6 @@ export default function HtmlLangWrapper() {
         const langMap: Record<string, string> = {
             en: 'en',
             zh: 'zh-CN',
-            es: 'es',
         }
 
         const lang = langMap[i18n.language] || 'zh-CN'

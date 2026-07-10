@@ -115,6 +115,11 @@ export async function GET(req: Request) {
                 input_price: model.input_price,
                 output_price: model.output_price,
                 per_msg_price: model.per_msg_price,
+                price_multiplier: model.price_multiplier,
+                billing_mode: model.billing_mode,
+                effective_input_price: model.effective_input_price,
+                effective_output_price: model.effective_output_price,
+                effective_per_msg_price: model.effective_per_msg_price,
                 updated_at: model.updated_at,
             })
         })
@@ -125,6 +130,11 @@ export async function GET(req: Request) {
                     input_price: 60,
                     output_price: 60,
                     per_msg_price: -1,
+                    price_multiplier: 1,
+                    billing_mode: 'token',
+                    effective_input_price: 60,
+                    effective_output_price: 60,
+                    effective_per_msg_price: -1,
                     updated_at: new Date(),
                 }
 
@@ -145,6 +155,11 @@ export async function GET(req: Request) {
                     input_price: dbModel.input_price,
                     output_price: dbModel.output_price,
                     per_msg_price: dbModel.per_msg_price,
+                    price_multiplier: dbModel.price_multiplier,
+                    billing_mode: dbModel.billing_mode,
+                    effective_input_price: dbModel.effective_input_price,
+                    effective_output_price: dbModel.effective_output_price,
+                    effective_per_msg_price: dbModel.effective_per_msg_price,
                     updated_at: dbModel.updated_at,
                 }
             }

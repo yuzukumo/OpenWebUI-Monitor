@@ -4,7 +4,7 @@
 
 # OpenWebUI Monitor
 
-**English** / [简体中文](./resources/tutorials/zh-cn/README_zh.md) / [Español](./resources/tutorials/es/README_es.md)
+**English** / [简体中文](./resources/tutorials/zh-cn/README_zh.md)
 
 </div>
 
@@ -16,7 +16,7 @@ A monitoring dashboard for OpenWebUI that tracks usage and manages user balances
 
 ## Features
 
-- Set prices for each model in OpenWebUI
+- Choose token-based or per-request billing for each model; token billing supports per-model input/output guide prices and a multiplier
 - Charge chat and image requests based on model pricing, with end-of-chat usage notifications
 - Handle newer and older OpenWebUI usage payload shapes, including `usage`, `info.usage`, and legacy token fields
 - Sync the authoritative user list from OpenWebUI by stable user `id`, so renames update in place and deleted users disappear automatically
@@ -121,7 +121,7 @@ sudo docker compose up -d
 | POSTGRES_DATABASE                | PostgreSQL database name                                                                                                                    | `openwebui_monitor` |
 | DEFAULT_MODEL_INPUT_PRICE        | Default model input price, in USD per million tokens                                                                                        | `60`                |
 | DEFAULT_MODEL_OUTPUT_PRICE       | Default model output price, in USD per million tokens                                                                                       | `60`                |
-| DEFAULT_MODEL_PER_MSG_PRICE      | Default model price for each message, in USD                                                                                                | `-1`                |
+| DEFAULT_MODEL_PER_MSG_PRICE      | Default per-request model price; a negative value makes new models use token-based billing                                                  | `-1`                |
 | INIT_BALANCE                     | Initial user balance                                                                                                                        | `0`                 |
 | COST_ON_INLET                    | Pre-deduction amount on inlet. Can be a fixed number for all models (e.g. `0.1`), or model-specific format (e.g. `gpt-4:0.32,gpt-3.5:0.01`) | `0`                 |
 | OPENWEBUI_USERS_SYNC_INTERVAL_MS | Interval in milliseconds for refreshing the authoritative user list from OpenWebUI on the user-management API                               | `30000`             |

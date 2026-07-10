@@ -8,9 +8,8 @@ import dayjs from 'dayjs'
 
 import enCommon from '@/locales/en/common.json'
 import zhCommon from '@/locales/zh/common.json'
-import esCommon from '@/locales/es/common.json'
 
-const i18n = i18next
+i18next
     .use(LanguageDetector)
     .use(initReactI18next)
     .init({
@@ -21,10 +20,8 @@ const i18n = i18next
             zh: {
                 common: zhCommon,
             },
-            es: {
-                common: esCommon,
-            },
         },
+        supportedLngs: ['en', 'zh'],
         fallbackLng: 'zh',
         interpolation: {
             escapeValue: false,
@@ -38,7 +35,6 @@ export default function I18nProvider({ children }: PropsWithChildren) {
             const dayjsLocaleMap: Record<string, string> = {
                 en: 'en',
                 zh: 'zh-cn',
-                es: 'es',
             }
             const locale = dayjsLocaleMap[i18next.language] || 'zh-cn'
             dayjs.locale(locale)

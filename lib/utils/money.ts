@@ -121,10 +121,7 @@ export function formatMoneyFromMicros(
     return microsToDecimalString(value, fractionDigits)
 }
 
-export function divideAndRound(
-    numerator: bigint,
-    denominator: bigint
-): bigint {
+export function divideAndRound(numerator: bigint, denominator: bigint): bigint {
     if (denominator === BigInt(0)) {
         throw new Error('Division by zero')
     }
@@ -157,6 +154,33 @@ export function calculateTokenCostMicros({
         normalizedOutputTokens * decimalToMicros(outputPrice)
 
     return divideAndRound(numerator, TOKENS_PER_PRICING_UNIT)
+}
+
+export function applyPriceMultiplierMicros(
+    guidePrice: unknown,
+    multiplier: unknown
+): bigint {
+    const guidePriceMicros = decimalToMicros(guidePrice)
+    const multiplierUnits = decimalToMicros(multiplier)
+
+    if (guidePriceMicros < BigInt(0)) {
+        throw new Error('Guide price cannot be negative')
+    }
+
+    if (multiplierUnits < BigInt(0)) {
+        throw new Error('Price multiplier cannot be negative')
+    }
+
+    return divideAndRound(guidePriceMicros * multiplierUnits, MONEY_FACTOR)
+}
+
+export function applyPriceMultiplier(
+    guidePrice: unknown,
+    multiplier: unknown
+): string {
+    return microsToDecimalString(
+        applyPriceMultiplierMicros(guidePrice, multiplier)
+    )
 }
 
 export function getMoneyAndMicros(

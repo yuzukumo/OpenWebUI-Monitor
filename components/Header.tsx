@@ -109,12 +109,6 @@ export default function Header() {
                                         onClick: () =>
                                             handleLanguageChange('zh'),
                                     },
-                                    {
-                                        key: 'es',
-                                        label: 'Español',
-                                        onClick: () =>
-                                            handleLanguageChange('es'),
-                                    },
                                 ],
                                 selectedKeys: [i18n.language],
                             }}
@@ -125,9 +119,7 @@ export default function Header() {
                                 <span className="text-xs font-medium text-gray-600 group-hover:text-blue-500 transition-colors">
                                     {i18n.language === 'zh'
                                         ? t('header.language.zh')
-                                        : i18n.language === 'es'
-                                          ? t('header.language.es')
-                                          : t('header.language.en')}
+                                        : t('header.language.en')}
                                 </span>
                                 <ChevronDown className="w-3 h-3 text-gray-600 group-hover:text-blue-500 transition-colors" />
                             </button>
@@ -366,11 +358,6 @@ export default function Header() {
                             key: 'zh',
                             label: '简体中文',
                             onClick: () => handleLanguageChange('zh'),
-                        },
-                        {
-                            key: 'es',
-                            label: 'Español',
-                            onClick: () => handleLanguageChange('es'),
                         },
                     ],
                     selectedKeys: [i18n.language],

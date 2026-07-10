@@ -1,14 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { updateModelPrice } from '@/lib/db/client'
+import {
+    updateModelPrice,
+    type BillingMode,
+    type ModelPriceUpdate,
+} from '@/lib/db/client'
 import { verifyApiToken } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
-interface PriceUpdate {
-    id: string
-    input_price: number
-    output_price: number
-    per_msg_price: number
+function parsePriceUpdate(value: unknown): ModelPriceUpdate | null {
+    if (!value || typeof value !== 'object') {
+        return null
+    }
+
+    const update = value as Record<string, unknown>
+    const perMsgPrice = Number(update.per_msg_price ?? -1)
+    const billingMode: BillingMode | null =
+        update.billing_mode === 'token' || update.billing_mode === 'request'
+            ? update.billing_mode
+            : update.billing_mode === undefined
+              ? perMsgPrice >= 0
+                  ? 'request'
+                  : 'token'
+              : null
+    const parsed: ModelPriceUpdate = {
+        id: typeof update.id === 'string' ? update.id : '',
+        input_price: Number(update.input_price),
+        output_price: Number(update.output_price),
+        per_msg_price: perMsgPrice,
+        price_multiplier: Number(update.price_multiplier ?? 1),
+        billing_mode: billingMode ?? 'token',
+    }
+
+    if (
+        !parsed.id ||
+        !Number.isFinite(parsed.input_price) ||
+        parsed.input_price < 0 ||
+        !Number.isFinite(parsed.output_price) ||
+        parsed.output_price < 0 ||
+        !Number.isFinite(parsed.per_msg_price) ||
+        !Number.isFinite(parsed.price_multiplier) ||
+        parsed.price_multiplier < 0 ||
+        billingMode === null ||
+        (billingMode === 'request' && parsed.per_msg_price < 0)
+    ) {
+        return null
+    }
+
+    return parsed
 }
 
 export async function POST(request: NextRequest) {
@@ -30,28 +69,14 @@ export async function POST(request: NextRequest) {
             )
         }
 
-        const validUpdates = updates
-            .map((update: any) => ({
-                id: update.id,
-                input_price: Number(update.input_price),
-                output_price: Number(update.output_price),
-                per_msg_price: Number(update.per_msg_price ?? -1),
-            }))
-            .filter((update: PriceUpdate) => {
-                const isValidPrice = (price: number) =>
-                    !isNaN(price) && isFinite(price)
-
-                if (
-                    !update.id ||
-                    !isValidPrice(update.input_price) ||
-                    !isValidPrice(update.output_price) ||
-                    !isValidPrice(update.per_msg_price)
-                ) {
-                    console.log('Skipping invalid data:', update)
-                    return false
-                }
-                return true
-            })
+        const parsedUpdates = updates.map(parsePriceUpdate)
+        if (parsedUpdates.some((update) => update === null)) {
+            return NextResponse.json(
+                { error: 'Invalid model pricing update' },
+                { status: 400 }
+            )
+        }
+        const validUpdates = parsedUpdates as ModelPriceUpdate[]
 
         console.log('Update data after processing:', validUpdates)
         console.log(
@@ -59,21 +84,18 @@ export async function POST(request: NextRequest) {
         )
 
         const results = await Promise.all(
-            validUpdates.map(async (update: PriceUpdate) => {
+            validUpdates.map(async (update: ModelPriceUpdate) => {
                 try {
                     console.log('Updating model prices:', {
                         id: update.id,
                         input_price: update.input_price,
                         output_price: update.output_price,
                         per_msg_price: update.per_msg_price,
+                        price_multiplier: update.price_multiplier,
+                        billing_mode: update.billing_mode,
                     })
 
-                    const result = await updateModelPrice(
-                        update.id,
-                        update.input_price,
-                        update.output_price,
-                        update.per_msg_price
-                    )
+                    const result = await updateModelPrice(update)
 
                     console.log('Update results:', {
                         id: update.id,
