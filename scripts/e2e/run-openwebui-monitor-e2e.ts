@@ -2123,7 +2123,6 @@ async function updateMonitorModelPrice(update: {
 }
 
 async function runChromiumChecks(
-    packageVersion: string,
     adminUserId: string
 ): Promise<ChromiumCheckSummary> {
     const browser = await chromium.launch({
@@ -2139,19 +2138,6 @@ async function runChromiumChecks(
             locale: 'en-US',
             viewport: { width: 1440, height: 1100 },
         })
-
-        await context.route(
-            'https://api.github.com/repos/variantconst/openwebui-monitor/releases/latest',
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify({
-                        tag_name: `v${packageVersion}`,
-                    }),
-                })
-            }
-        )
 
         const page = await context.newPage()
 
@@ -2316,10 +2302,6 @@ async function main() {
         logStep(
             `Using ports mock=${MOCK_PORT}, owu=${OWU_PORT}, monitor=${MONITOR_PORT}, postgres=${POSTGRES_PORT}`
         )
-
-        const packageJson = JSON.parse(
-            await fs.readFile(path.join(ROOT_DIR, 'package.json'), 'utf8')
-        ) as { version: string }
 
         if (process.env.E2E_SKIP_BROWSER_INSTALL !== '1') {
             logStep('Ensuring Playwright Chromium is installed')
@@ -2657,10 +2639,7 @@ async function main() {
         )
 
         const apiChecks = await runMonitorApiChecks()
-        const chromiumChecks = await runChromiumChecks(
-            packageJson.version,
-            adminSession.id
-        )
+        const chromiumChecks = await runChromiumChecks(adminSession.id)
 
         const usersAfterReset = await fetchMonitorUsers()
         const adminUserAfterReset = findMonitorUser(

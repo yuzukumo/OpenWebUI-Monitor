@@ -11,6 +11,7 @@ import type { ChildProcess } from 'node:child_process'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import { chromium, type Page } from 'playwright'
+import { calculateTokenCostMicros } from '../../lib/utils/money'
 
 interface CommandOptions {
     cwd?: string
@@ -375,24 +376,19 @@ async function waitForHttp(
 }
 
 async function resolveDockerCommand() {
-    const candidates = [
-        process.env.E2E_DOCKER_BIN,
-        'docker',
-        '/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe',
-    ].filter((candidate): candidate is string => Boolean(candidate))
+    const command = process.env.E2E_DOCKER_BIN || 'docker'
 
-    for (const candidate of candidates) {
-        try {
-            await runCommand(candidate, ['info'], {
-                logFilePath: path.join(LOGS_DIR, 'docker-info.log'),
-            })
-            return candidate
-        } catch {
-            continue
-        }
+    try {
+        await runCommand(command, ['info'], {
+            logFilePath: path.join(LOGS_DIR, 'docker-info.log'),
+        })
+        return command
+    } catch (error) {
+        throw new Error(
+            `Unable to connect to Docker using ${command}. Check the WSL Docker integration and daemon status before retrying.`,
+            { cause: error }
+        )
     }
-
-    throw new Error('Unable to connect to Docker using docker or docker.exe')
 }
 
 async function removeDockerContainer(name: string) {
@@ -902,17 +898,6 @@ async function runChromiumChecks() {
             viewport: { width: 1440, height: 1100 },
         })
 
-        await context.route(
-            'https://api.github.com/repos/variantconst/openwebui-monitor/releases/latest',
-            async (route) => {
-                await route.fulfill({
-                    status: 200,
-                    contentType: 'application/json',
-                    body: JSON.stringify({ tag_name: 'v0.0.0-e2e' }),
-                })
-            }
-        )
-
         const page = await context.newPage()
 
         await page.goto(`${MONITOR_BASE_URL}/token`, {
@@ -933,7 +918,7 @@ async function runChromiumChecks() {
         await waitForVisibleText(page, 'gpt-4o-mini')
         await waitForVisibleText(page, 'Billing Method')
         await waitForVisibleText(page, 'Price Configuration')
-        await waitForVisibleText(page, 'Input Guide')
+        await waitForVisibleText(page, 'Input Price')
         await assertDarkActionButtonIsReadable(page, 'Test All Models')
         await assertDarkActionButtonIsReadable(page, 'Sync All Derived Models')
         await waitForLoadedImageAlt(page, 'gpt-4o-mini')
@@ -989,24 +974,56 @@ async function runChromiumChecks() {
             0
         )
 
-        const inputGuideField = tokenRow.locator(
+        const inputPriceField = tokenRow.locator(
             '[data-price-field="input_price"]'
         )
         assert.equal(
-            await inputGuideField
+            await inputPriceField
                 .locator('[data-effective-price="input_price"]')
                 .innerText(),
             '1.500000',
-            'Token guide price does not show its multiplied price'
+            'Token price does not show its multiplied price'
         )
-        const textDecoration = await inputGuideField
-            .locator('.group')
-            .evaluate(
-                (node) => window.getComputedStyle(node).textDecorationLine
-            )
+        const effectivePriceStyles = await inputPriceField
+            .locator('[data-effective-price="input_price"] .group span')
+            .first()
+            .evaluate((node) => {
+                const style = window.getComputedStyle(node)
+                return {
+                    color: style.color,
+                    fontSize: style.fontSize,
+                    textDecoration: style.textDecorationLine,
+                }
+            })
+        const configuredPrice = inputPriceField.locator(
+            '[data-configured-price="input_price"]'
+        )
+        assert.equal(await configuredPrice.innerText(), '1.000000')
+        const configuredPriceStyles = await configuredPrice.evaluate((node) => {
+            const style = window.getComputedStyle(node)
+            return {
+                color: style.color,
+                fontSize: style.fontSize,
+                textDecoration: style.textDecorationLine,
+            }
+        })
         assert(
-            textDecoration.includes('line-through'),
-            `Multiplied guide price should be struck through; got ${textDecoration}`
+            !effectivePriceStyles.textDecoration.includes('line-through'),
+            'Effective token price should not be struck through'
+        )
+        assert(
+            configuredPriceStyles.textDecoration.includes('line-through'),
+            'Configured token price should be struck through'
+        )
+        assert(
+            parseFloat(effectivePriceStyles.fontSize) >
+                parseFloat(configuredPriceStyles.fontSize),
+            'Effective token price should be larger than configured price'
+        )
+        assert(
+            colorBrightness(configuredPriceStyles.color) >
+                colorBrightness(effectivePriceStyles.color),
+            'Configured token price should be lighter than effective price'
         )
 
         const modelsUrl = page.url()
@@ -1030,6 +1047,14 @@ async function runChromiumChecks() {
             )
             return effectivePrice?.textContent?.trim() === '1.250000'
         })
+        assert.equal(
+            (await multiplierField.locator('.group').innerText()).replace(
+                /\s/g,
+                ''
+            ),
+            '1.25x',
+            'Multiplier should not show padded decimal places'
+        )
         assert.equal(
             page.url(),
             modelsUrl,
@@ -1181,6 +1206,18 @@ async function main() {
     const cleanup = new CleanupStack()
 
     try {
+        assert.equal(
+            calculateTokenCostMicros({
+                inputTokens: 0,
+                outputTokens: 2_000_000,
+                inputPrice: 0,
+                outputPrice: '0.000001',
+                priceMultiplier: '0.5',
+            }),
+            BigInt(1),
+            'Multiplier billing should round only the final cost'
+        )
+
         DOCKER_BIN = await resolveDockerCommand()
         logStep(
             `Using ports mock_owu=${OWU_PORT}, monitor=${MONITOR_PORT}, postgres=${POSTGRES_PORT}`

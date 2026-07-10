@@ -107,6 +107,16 @@ export function formatMoney(
     return (0).toFixed(fractionDigits)
 }
 
+export function formatCompactDecimal(value: unknown): string {
+    const numericValue = Number(value)
+
+    if (!Number.isFinite(numericValue) || Object.is(numericValue, -0)) {
+        return '0'
+    }
+
+    return numericValue.toString()
+}
+
 export function microsToDecimalString(
     value: unknown,
     fractionDigits: number = MONEY_SCALE
@@ -141,45 +151,55 @@ export function calculateTokenCostMicros({
     outputTokens,
     inputPrice,
     outputPrice,
+    priceMultiplier = 1,
 }: {
     inputTokens: number
     outputTokens: number
     inputPrice: unknown
     outputPrice: unknown
+    priceMultiplier?: unknown
 }) {
     const normalizedInputTokens = BigInt(Math.max(Math.round(inputTokens), 0))
     const normalizedOutputTokens = BigInt(Math.max(Math.round(outputTokens), 0))
-    const numerator =
+    const basePriceNumerator =
         normalizedInputTokens * decimalToMicros(inputPrice) +
         normalizedOutputTokens * decimalToMicros(outputPrice)
+    const multiplierUnits = decimalToMicros(priceMultiplier)
 
-    return divideAndRound(numerator, TOKENS_PER_PRICING_UNIT)
+    if (multiplierUnits < BigInt(0)) {
+        throw new Error('Price multiplier cannot be negative')
+    }
+
+    return divideAndRound(
+        basePriceNumerator * multiplierUnits,
+        TOKENS_PER_PRICING_UNIT * MONEY_FACTOR
+    )
 }
 
 export function applyPriceMultiplierMicros(
-    guidePrice: unknown,
+    configuredPrice: unknown,
     multiplier: unknown
 ): bigint {
-    const guidePriceMicros = decimalToMicros(guidePrice)
+    const configuredPriceMicros = decimalToMicros(configuredPrice)
     const multiplierUnits = decimalToMicros(multiplier)
 
-    if (guidePriceMicros < BigInt(0)) {
-        throw new Error('Guide price cannot be negative')
+    if (configuredPriceMicros < BigInt(0)) {
+        throw new Error('Configured price cannot be negative')
     }
 
     if (multiplierUnits < BigInt(0)) {
         throw new Error('Price multiplier cannot be negative')
     }
 
-    return divideAndRound(guidePriceMicros * multiplierUnits, MONEY_FACTOR)
+    return divideAndRound(configuredPriceMicros * multiplierUnits, MONEY_FACTOR)
 }
 
 export function applyPriceMultiplier(
-    guidePrice: unknown,
+    configuredPrice: unknown,
     multiplier: unknown
 ): string {
     return microsToDecimalString(
-        applyPriceMultiplierMicros(guidePrice, multiplier)
+        applyPriceMultiplierMicros(configuredPrice, multiplier)
     )
 }
 

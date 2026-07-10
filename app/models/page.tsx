@@ -16,13 +16,17 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { toast, Toaster } from 'sonner'
 import { EditableCell } from '@/components/editable-cell'
-import { applyPriceMultiplier, formatMoney } from '@/lib/utils/money'
+import {
+    applyPriceMultiplier,
+    formatCompactDecimal,
+    formatMoney,
+} from '@/lib/utils/money'
 
 type PriceField =
     'input_price' | 'output_price' | 'per_msg_price' | 'price_multiplier'
 
 type BillingMode = 'token' | 'request'
-type TokenGuidePriceField = 'input_price' | 'output_price'
+type TokenPriceField = 'input_price' | 'output_price'
 
 interface ModelPricing {
     input_price: number
@@ -71,7 +75,7 @@ interface ModelSyncApiResponse {
 }
 
 const EFFECTIVE_PRICE_FIELDS: Record<
-    TokenGuidePriceField,
+    TokenPriceField,
     'effective_input_price' | 'effective_output_price'
 > = {
     input_price: 'effective_input_price',
@@ -1049,7 +1053,7 @@ export default function ModelsPage() {
         }
 
         const fields: Array<{
-            field: TokenGuidePriceField | 'price_multiplier'
+            field: TokenPriceField | 'price_multiplier'
             label: string
         }> = [
             {
@@ -1090,57 +1094,78 @@ export default function ModelsPage() {
         const isEditing =
             editingCell?.id === record.id && editingCell?.field === field
         const currentValue = Number(record[field])
-        const isTokenGuidePrice =
-            field === 'input_price' || field === 'output_price'
+        const isTokenPrice = field === 'input_price' || field === 'output_price'
         const hasMultiplier =
             Math.abs(Number(record.price_multiplier) - 1) > 0.0000005
-        const effectivePrice = isTokenGuidePrice
+        const effectivePrice = isTokenPrice
             ? Number(record[EFFECTIVE_PRICE_FIELDS[field]])
             : null
+        const showsEffectivePrice = isTokenPrice && hasMultiplier
+        const isUpdating = updatingModelIds.has(record.id)
 
         return (
             <div className="min-w-0 space-y-0.5" data-price-field={field}>
-                <EditableCell
-                    value={currentValue}
-                    isEditing={isEditing}
-                    onEdit={() => setEditingCell({ id: record.id, field })}
-                    onSubmit={async (value) => {
-                        try {
-                            await handlePriceUpdate(record.id, field, value)
-                            setEditingCell(null)
-                        } catch {}
-                    }}
-                    t={t}
-                    disabled={updatingModelIds.has(record.id)}
-                    onCancel={() => {
-                        setEditingCell(null)
-                        if (
-                            field === 'per_msg_price' &&
-                            draftBillingModes[record.id] === 'request' &&
-                            record.billing_mode !== 'request'
-                        ) {
-                            clearDraftBillingMode(record.id)
-                        }
-                    }}
-                    placeholder={
-                        field === 'price_multiplier'
-                            ? t('models.table.enterMultiplier')
-                            : t('models.table.enterPrice')
+                <div
+                    data-effective-price={
+                        showsEffectivePrice ? field : undefined
                     }
-                    validateValue={(value) => ({
-                        isValid: isFinite(value) && value >= 0,
-                        errorMessage: t('error.model.nonePositiveNumber'),
-                    })}
-                    isPerMsgPrice={field === 'per_msg_price'}
-                    suffix={field === 'price_multiplier' ? 'x' : undefined}
-                    strikeThrough={isTokenGuidePrice && hasMultiplier}
-                />
-                {isTokenGuidePrice && hasMultiplier && (
+                >
+                    <EditableCell
+                        value={currentValue}
+                        displayValue={
+                            showsEffectivePrice
+                                ? (effectivePrice ?? undefined)
+                                : undefined
+                        }
+                        formatValue={
+                            field === 'price_multiplier'
+                                ? formatCompactDecimal
+                                : undefined
+                        }
+                        isEditing={isEditing}
+                        onEdit={() => setEditingCell({ id: record.id, field })}
+                        onSubmit={async (value) => {
+                            try {
+                                await handlePriceUpdate(record.id, field, value)
+                                setEditingCell(null)
+                            } catch {}
+                        }}
+                        t={t}
+                        disabled={isUpdating}
+                        onCancel={() => {
+                            setEditingCell(null)
+                            if (
+                                field === 'per_msg_price' &&
+                                draftBillingModes[record.id] === 'request' &&
+                                record.billing_mode !== 'request'
+                            ) {
+                                clearDraftBillingMode(record.id)
+                            }
+                        }}
+                        placeholder={
+                            field === 'price_multiplier'
+                                ? t('models.table.enterMultiplier')
+                                : t('models.table.enterPrice')
+                        }
+                        validateValue={(value) => ({
+                            isValid: isFinite(value) && value >= 0,
+                            errorMessage: t('error.model.nonePositiveNumber'),
+                        })}
+                        isPerMsgPrice={field === 'per_msg_price'}
+                        suffix={field === 'price_multiplier' ? 'x' : undefined}
+                    />
+                </div>
+                {showsEffectivePrice && (
                     <div
-                        className="px-2 text-[11px] leading-4 text-muted-foreground/70 whitespace-nowrap"
-                        data-effective-price={field}
+                        className="cursor-pointer px-2 text-[11px] leading-4 text-muted-foreground/70 line-through whitespace-nowrap hover:text-muted-foreground"
+                        data-configured-price={field}
+                        onClick={
+                            isUpdating
+                                ? undefined
+                                : () => setEditingCell({ id: record.id, field })
+                        }
                     >
-                        {formatMoney(effectivePrice)}
+                        {formatMoney(currentValue)}
                     </div>
                 )}
             </div>

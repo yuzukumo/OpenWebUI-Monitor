@@ -38,7 +38,7 @@
         "menu": {
             "copyApiKey": "复制 API KEY",
             "dataBackup": "数据迁移",
-            "checkUpdate": "检查更新",
+            "sourceCode": "源代码",
             "logout": "退出登录",
             "settings": "设置",
             "title": "选项"
@@ -46,17 +46,7 @@
         "messages": {
             "unauthorized": "未授权，请重新登录",
             "apiKeyNotSet": "API 密钥未设置或加载失败",
-            "apiKeyCopied": "API 密钥已复制到剪贴板",
-            "updateCheckFailed": "检查更新失败",
-            "latestVersion": "当前已是最新版本",
-            "getVersionFailed": "获取版本号失败"
-        },
-        "update": {
-            "newVersion": "发现新版本",
-            "currentVersion": "当前版本",
-            "latestVersion": "最新版本",
-            "skipUpdate": "暂不更新",
-            "goToUpdate": "前往更新"
+            "apiKeyCopied": "API 密钥已复制到剪贴板"
         },
         "language": {
             "zh": "中",
@@ -125,10 +115,10 @@
                 "request": "按次计费"
             },
             "priceConfiguration": "价格配置",
-            "inputPrice": "输入指导价 ¥ / M tokens",
-            "outputPrice": "输出指导价 ¥ / M tokens",
-            "perRequestPrice": "按次价格 ¥ / 次",
-            "priceMultiplier": "计费倍率",
+            "inputPrice": "输入价格 ¥ / M tokens",
+            "outputPrice": "输出价格 ¥ / M tokens",
+            "perRequestPrice": "固定价格 ¥ / 次",
+            "priceMultiplier": "模型倍率",
             "enterPrice": "输入价格",
             "enterMultiplier": "输入倍率"
         },
@@ -219,16 +209,6 @@
             "time": "时间",
             "balance": "余额"
         }
-    },
-
-    "update": {
-        "newVersion": "发现新版本",
-        "currentVersion": "当前版本",
-        "latestVersion": "最新版本",
-        "ignore": "忽略",
-        "update": "更新",
-        "skipUpdate": "暂不更新",
-        "goToUpdate": "前往更新"
     },
 
     "backup": {

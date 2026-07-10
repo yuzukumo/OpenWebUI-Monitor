@@ -2,31 +2,19 @@
 
 import Link from 'next/link'
 import { useState, useEffect } from 'react'
-import { Dropdown, Modal } from 'antd'
+import { Dropdown } from 'antd'
 import { toast, Toaster } from 'sonner'
-import type { MenuProps } from 'antd'
 import {
     Copy,
     LogOut,
     Database,
-    Menu,
     Globe,
     X,
     Settings,
     ChevronDown,
 } from 'lucide-react'
 import DatabaseBackup from './DatabaseBackup'
-import { APP_VERSION } from '@/lib/version'
 import { usePathname, useRouter } from 'next/navigation'
-import {
-    Dialog,
-    DialogContent,
-    DialogHeader,
-    DialogTitle,
-    DialogFooter,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { createRoot } from 'react-dom/client'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTranslation } from 'react-i18next'
 import { FiDatabase, FiUsers, FiBarChart2, FiGithub } from 'react-icons/fi'
@@ -37,7 +25,6 @@ export default function Header() {
     const router = useRouter()
     const [isMenuOpen, setIsMenuOpen] = useState(false)
     const [isBackupModalOpen, setIsBackupModalOpen] = useState(false)
-    const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
     const [accessToken, setAccessToken] = useState<string | null>(null)
     const [apiKey, setApiKey] = useState(t('common.loading'))
 
@@ -145,118 +132,12 @@ export default function Header() {
         window.location.href = '/token'
     }
 
-    const checkUpdate = async () => {
-        const token = localStorage.getItem('access_token')
-        if (!token) {
-            toast.error(t('header.messages.unauthorized'))
-            return
-        }
-
-        setIsCheckingUpdate(true)
-        try {
-            const response = await fetch(
-                'https://api.github.com/repos/variantconst/openwebui-monitor/releases/latest'
-            )
-            const data = await response.json()
-            const latestVersion = data.tag_name
-
-            if (!latestVersion) {
-                throw new Error(t('header.messages.getVersionFailed'))
-            }
-
-            const currentVer = APP_VERSION.replace(/^v/, '')
-            const latestVer = latestVersion.replace(/^v/, '')
-
-            if (currentVer === latestVer) {
-                toast.success(
-                    `${t('header.messages.latestVersion')} v${APP_VERSION}`
-                )
-            } else {
-                return new Promise((resolve) => {
-                    const dialog = document.createElement('div')
-                    document.body.appendChild(dialog)
-
-                    const DialogComponent = () => {
-                        const [open, setOpen] = useState(true)
-
-                        const handleClose = () => {
-                            setOpen(false)
-                            document.body.removeChild(dialog)
-                            resolve(null)
-                        }
-
-                        const handleUpdate = () => {
-                            window.open(
-                                'https://github.com/VariantConst/OpenWebUI-Monitor/releases/latest',
-                                '_blank'
-                            )
-                            handleClose()
-                        }
-
-                        return (
-                            <Dialog open={open} onOpenChange={handleClose}>
-                                <DialogContent className="w-[calc(100%-2rem)] !max-w-[70vw] sm:max-w-[425px] rounded-lg">
-                                    <DialogHeader>
-                                        <div className="flex items-center gap-2">
-                                            <div className="flex h-8 w-8 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-primary/10">
-                                                <FiGithub className="w-4 h-4 text-gray-500" />
-                                            </div>
-                                            <DialogTitle className="text-base sm:text-lg">
-                                                {t('header.update.newVersion')}
-                                            </DialogTitle>
-                                        </div>
-                                    </DialogHeader>
-                                    <div className="flex flex-col gap-3 sm:gap-4 py-3 sm:py-4">
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-sm sm:text-base text-muted-foreground">
-                                                {t(
-                                                    'header.update.currentVersion'
-                                                )}
-                                            </span>
-                                            <span className="font-mono text-sm sm:text-base">
-                                                v{APP_VERSION}
-                                            </span>
-                                        </div>
-                                        <div className="flex justify-between items-center">
-                                            <span className="text-sm sm:text-base text-muted-foreground">
-                                                {t(
-                                                    'header.update.latestVersion'
-                                                )}
-                                            </span>
-                                            <span className="font-mono text-sm sm:text-base text-primary">
-                                                {latestVersion}
-                                            </span>
-                                        </div>
-                                    </div>
-                                    <DialogFooter className="gap-2 sm:gap-3">
-                                        <Button
-                                            variant="outline"
-                                            onClick={handleClose}
-                                            className="h-8 sm:h-10 text-sm sm:text-base"
-                                        >
-                                            {t('header.update.skipUpdate')}
-                                        </Button>
-                                        <Button
-                                            onClick={handleUpdate}
-                                            className="h-8 sm:h-10 text-sm sm:text-base bg-primary hover:bg-primary/90 text-primary-foreground"
-                                        >
-                                            {t('header.update.goToUpdate')}
-                                        </Button>
-                                    </DialogFooter>
-                                </DialogContent>
-                            </Dialog>
-                        )
-                    }
-
-                    createRoot(dialog).render(<DialogComponent />)
-                })
-            }
-        } catch (error) {
-            toast.error(t('header.messages.updateCheckFailed'))
-            console.error(t('header.messages.updateCheckFailed'), error)
-        } finally {
-            setIsCheckingUpdate(false)
-        }
+    const openRepository = () => {
+        window.open(
+            'https://github.com/yuzukumo/OpenWebUI-Monitor',
+            '_blank',
+            'noopener,noreferrer'
+        )
     }
 
     const navigationItems = [
@@ -298,41 +179,8 @@ export default function Header() {
         },
         {
             icon: <FiGithub className="w-5 h-5" />,
-            label: t('header.menu.checkUpdate'),
-            onClick: checkUpdate,
-            color: 'from-emerald-500/20 to-teal-500/20',
-        },
-        {
-            icon: <LogOut className="w-5 h-5" />,
-            label: t('header.menu.logout'),
-            onClick: handleLogout,
-            color: 'from-orange-500/20 to-red-500/20',
-        },
-    ]
-
-    const menuItems = [
-        ...(!isTokenPage
-            ? navigationItems.map((item) => ({
-                  ...item,
-                  onClick: () => router.push(item.path),
-              }))
-            : []),
-        {
-            icon: <Copy className="w-5 h-5" />,
-            label: t('header.menu.copyApiKey'),
-            onClick: handleCopyApiKey,
-            color: 'from-blue-500/20 to-indigo-500/20',
-        },
-        {
-            icon: <Database className="w-5 h-5" />,
-            label: t('header.menu.dataBackup'),
-            onClick: () => setIsBackupModalOpen(true),
-            color: 'from-rose-500/20 to-pink-500/20',
-        },
-        {
-            icon: <FiGithub className="w-5 h-5" />,
-            label: t('header.menu.checkUpdate'),
-            onClick: checkUpdate,
+            label: t('header.menu.sourceCode'),
+            onClick: openRepository,
             color: 'from-emerald-500/20 to-teal-500/20',
         },
         {

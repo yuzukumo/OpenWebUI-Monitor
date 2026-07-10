@@ -1,92 +1,145 @@
-# OpenWebUI Monitor 部署详细教程
+# OpenWebUI Monitor 部署指南
 
-OpenWebUI Monitor 是搭配 [OpenWebUI](https://github.com/open-webui/open-webui) 使用的，你应该已经拥有一个良好运行且具有公网域名的 OpenWebUI 网站。为了使用 OpenWebUI Monitor，你需要分别部署一个后端服务器，并安装一个 OpenWebUI 的函数插件。
+OpenWebUI Monitor 需要：
 
-## 一、部署后端服务器
+- 当前版本的 OpenWebUI
+- PostgreSQL
+- Monitor 能够访问 OpenWebUI
+- OpenWebUI 能够访问 Monitor
+- 当前版本的 [OpenWebUI Monitor 过滤器函数](../../functions/openwebui_monitor.py)
 
-### 方式 1：Vercel 部署
+最近一次集成验证基于 OpenWebUI `v0.10.2`。此 fork 跟随当前 OpenWebUI API，不再面向旧版 OpenWebUI。
 
-1. 点击下方按钮，一键 fork 本项目并部署到 Vercel。
+## 一、使用 Docker Compose 部署
 
-[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FVariantConst%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=OpenWebUI-Monitor)
+推荐使用 Docker Compose。仓库维护的配置使用公开多架构镜像 `ghcr.io/yuzukumo/openwebui-monitor:latest` 和 PostgreSQL 18。
 
-2. 配置环境变量。点击 Vercel 中本项目的 Settings，打开 Environment Variables，然后添加如下环境变量：
-
-- `OPENWEBUI_DOMAIN`：你的 OpenWebUI 的域名，例如 `https://chat.example.com`
-- `OPENWEBUI_API_KEY`：OpenWebUI 的 API Key，在 `个人设置 -> 账号 -> API密钥` 中获取
-  <img width="884" alt="image" src="https://github.com/user-attachments/assets/da03a58a-4bfb-4371-b7f7-c6aa915eacdb">
-- `API_KEY`：这是你稍后要填写在 OpenWebUI 函数插件中 `Api Key` 的，用于向 OpenWebUI Monitor 服务器发送请求的鉴权。建议使用 [1Password](https://1password.com/) 生成一个少于 56 个字符的强密码。
-- `ACCESS_TOKEN`：访问 OpenWebUI Monitor 网页时要输入的访问密钥
-- `INIT_BALANCE`（可选）：用户初始余额，例如 `1.14`
-- `COST_ON_INLET`（可选）：开始对话时的预扣费金额。可以配置为：
-    - 所有模型统一的固定数字，例如 `0.1`
-    - 针对不同模型的配置，例如 `gpt-4:0.32,gpt-3.5:0.01`
-
-3. 前往项目中的 Storage 选项，Create 或者 Connect 到一个 Neon Postgres 数据库<img width="1138" alt="image" src="https://github.com/user-attachments/assets/365e6dea-5d25-42ab-9421-766e2633f389">
-
-4. 回到 Deployments 页面，重新部署<img width="1492" alt="image" src="https://github.com/user-attachments/assets/45ed44d0-6b1a-43a8-a093-c5068b36d596">
-
-至此已部署完成。请记住 Vercel 给你分配的域名，或者在设置中添加自定义域名。稍后这个域名会作为 OpenWebUI Monitor 函数插件中的 `Api Endpoint` 使用。
-
-请注意，由于 Vercel 免费套餐的限制，数据库连接会比较缓慢，每条消息的 token 计算可能需要长达 2 秒的时间。自己有服务器的话建议使用 Docker compose 部署。
-
-### 方式 2：Docker compose 部署
-
-1. 克隆本项目
+### 1. 准备配置
 
 ```bash
-git clone https://github.com/VariantConst/OpenWebUI-Monitor.git
-```
-
-2. 配置环境变量
-
-```bash
+git clone https://github.com/yuzukumo/OpenWebUI-Monitor.git
+cd OpenWebUI-Monitor
 cp .env.example .env
 ```
 
-然后编辑 `.env` 文件。如果你想要连接到现有的 Postgres 数据库，请取消注释并填写 `POSTGRES_*` 系列环境变量。如果没有指定 `POSTGRES_HOST` 变量，稍后会自动新起一个 Postgres 数据库的 Docker 容器。
+在 `.env` 中至少设置以下内容：
 
-3. 启动 Docker 容器。在项目根目录下执行
-
-```bash
-sudo docker compose up -d
+```dotenv
+OPENWEBUI_DOMAIN=https://chat.example.com
+OPENWEBUI_API_KEY=your-openwebui-admin-api-key-or-jwt
+ACCESS_TOKEN=your-monitor-login-secret
+API_KEY=your-function-shared-secret
 ```
 
-至此部署已完成！请自行发布网站到公网。如果想修改端口，请修改 `docker-compose.yml` 文件中的 `ports` 中 `:` 前面的端口数字。
+- `OPENWEBUI_DOMAIN` 由 Monitor 容器访问。除非 OpenWebUI 与 Monitor 位于同一容器，否则不能使用 `127.0.0.1`。
+- `OPENWEBUI_API_KEY` 必须属于 OpenWebUI 管理员。OpenWebUI 需要启用 API Key；若开启了端点限制，需要放行 `/api/models`、`/api/v1/models/model/profile/image`、`/api/chat/completions` 和 `/api/v1/users/all`。
+- `ACCESS_TOKEN` 用于保护 Monitor 界面和面板接口。
+- `API_KEY` 只用于 OpenWebUI 函数与 Monitor inlet/outlet 接口之间的鉴权。
 
-## 二、安装 OpenWebUI 函数插件（二选一）
+请为 `ACCESS_TOKEN` 和 `API_KEY` 分别生成独立的随机值。它们不需要是 OpenWebUI JWT 或 API Key。
 
-<details>
-<summary><strong>方法一（推荐）：显式显示计费信息函数</strong></summary>
+### 2. 启动 Monitor
 
-1. 打开 OpenWebUI 管理员面板的 `函数` 页面，点击 `+` 创建新函数，将 [这个函数](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/openwebui_monitor.py) 的代码粘贴进去并保存。
+```bash
+docker compose pull
+docker compose up -d
+```
 
-2. 填写配置
+宿主机默认通过 `http://127.0.0.1:3003` 访问。容器在 Docker 网络内监听 `3000` 端口。
 
-- `Api Key`：Vercel 环境变量中设置的 `API_KEY`
-- `Api Endpoint`：OpenWebUI Monitor 部署后的域名或内网地址，例如 `https://openwebui-monitor.vercel.app` 或 `http://192.168.x.xxx:7878`
+```bash
+docker compose ps
+docker compose logs -f openwebui-monitor
+```
 
-3. 启用函数，并点击 `…` 打开详细配置，全局启用函数
+### 3. PostgreSQL 18 数据目录
 
-<img width="1165" alt="image" src="https://github.com/user-attachments/assets/2d707df4-65c3-4bb9-a628-50db62db5488">
+仓库内置数据库将数据卷挂载到 `/var/lib/postgresql`，与 PostgreSQL 18 镜像的数据目录布局一致。
 
-4. 该函数会默认在每个回复消息顶部直接显示计费信息
+不要让 PostgreSQL 18 直接使用之前挂载在 `/var/lib/postgresql/data` 的 PostgreSQL 17 或更早版本数据卷。请选择一种处理方式：
 
-</details>
-<details>
-<summary><strong>方法二：隐式（手动触发）显示计费信息函数</strong></summary>
+1. 需要保留数据时，使用 `pg_upgrade` 或导出再导入完成 PostgreSQL 大版本迁移。
+2. 确认旧 Monitor 数据可以丢弃时，停止服务并删除旧数据卷，再启动 PostgreSQL 18。
 
-若你选择隐式显示计费，则取而代之用 [这个函数](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/openwebui_monitor_invisible.py) 的代码粘贴进去并保存，同样需要启用函数，并点击 `…` 打开详细配置，全局启用函数。但是要额外再安装一个 Action 函数插件
+删除数据卷不可恢复。执行前必须核对卷名，并备份所有需要保留的数据。
 
-- Action 函数
+### 4. 使用外部 PostgreSQL
 
-同理，选择添加并复制[Action 函数](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/get_usage_button.py)的代码粘贴进去保存,启用函数，并点击 `…` 打开详细配置，全局启用函数。
-该函数会接管原先计费插件的统计信息显示选项配置
+应用支持 `POSTGRES_URL`、`DATABASE_URL` 或单独的 `POSTGRES_*` 变量。将仓库 Compose 配置改为使用外部数据库时，需要移除内置的 `openwebui-monitor-db` 服务和应用服务中的 `depends_on`，然后填写外部数据库连接参数。应用启动时会自动创建并迁移数据表。
 
-- 使用
+## 二、使用 Vercel 部署
 
-![CleanShot 2024-12-10 at 13 41 08](https://github.com/user-attachments/assets/e999d022-339e-41d3-9bf9-a6f8d9877fe8)
+[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyuzukumo%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=openwebui-monitor&env=OPENWEBUI_DOMAIN,OPENWEBUI_API_KEY,ACCESS_TOKEN,API_KEY)
 
-手动点击底部的"计费信息"按钮来显示消息，但要注意的是该方式只能显示对话最新（最底部）的消息计费信息
+1. 使用上方按钮部署此 fork。
+2. 在 Vercel 项目中添加 `OPENWEBUI_DOMAIN`、`OPENWEBUI_API_KEY`、`ACCESS_TOKEN` 和 `API_KEY`。
+3. 创建或连接 PostgreSQL 服务，并将连接串提供为 `POSTGRES_URL` 或 `DATABASE_URL`。
+4. 所有环境变量配置完成后重新部署。
 
-</details>
+Vercel 必须能够访问 OpenWebUI，同时 OpenWebUI 容器也必须能够访问 Vercel 提供的 Monitor 地址，因为该地址将作为函数的 `Api Endpoint`。
+
+## 三、安装 OpenWebUI 函数
+
+当前支持的集成方式是 [openwebui_monitor.py](../../functions/openwebui_monitor.py)。
+
+1. 使用管理员账号登录 OpenWebUI，打开函数页面。
+2. 创建函数，粘贴 `openwebui_monitor.py` 的当前内容并保存。
+3. 配置函数 Valves：
+
+| 配置           | 值                                                         |
+| -------------- | ---------------------------------------------------------- |
+| `Api Endpoint` | OpenWebUI 能访问的 Monitor 基础地址，不要附加具体 API 路径 |
+| `Api Key`      | 与 Monitor `API_KEY` 相同的值                              |
+| `Language`     | `en` 或 `zh`                                               |
+
+4. 全局启用该函数。
+
+在共享 Docker 网络中，`Api Endpoint` 可以直接使用 Monitor 容器名和内部端口：
+
+```text
+http://openwebui-monitor-app:3000
+```
+
+如果 OpenWebUI 与 Monitor 属于不同的 Compose 项目，请将它们接入同一外部网络，或使用 OpenWebUI 容器能够路由到的地址。宿主机绑定的 `127.0.0.1:3003` 并不是 OpenWebUI 容器自身回环地址。
+
+函数会在请求前向 `/api/v1/inlet` 发送请求信息，并在请求完成后将带有上游 usage 的消息发送到 `/api/v1/outlet`。发送前会移除大体积内联图片数据。更新 Monitor 时，请保持 OpenWebUI 中安装的函数与仓库版本一致。
+
+## 四、配置模型计费
+
+使用 `ACCESS_TOKEN` 登录 Monitor 后，打开模型管理页面。
+
+### 按量计费
+
+填写输入价格、输出价格和模型倍率。价格单位为每百万 tokens：
+
+```text
+输入计费价格 = 输入价格 x 模型倍率
+输出计费价格 = 输出价格 x 模型倍率
+```
+
+### 按次计费
+
+只填写固定的按次价格。此模式下不会使用输入输出价格，也不会应用模型倍率。
+
+对于 OpenWebUI 派生模型，同步操作会从基础模型复制计费方式和相关价格字段。
+
+## 五、更新
+
+每次向此 fork 推送代码，GitHub Actions 都会分别使用原生 `amd64` 和 `arm64` runner 构建镜像，并向 GHCR 发布多架构 `latest` manifest。
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+同时检查 `resources/functions/openwebui_monitor.py` 是否有变化，并更新 OpenWebUI 中已安装的函数。
+
+## 六、验证
+
+1. 通过 `http://127.0.0.1:3003` 或反向代理地址打开 Monitor，使用 `ACCESS_TOKEN` 登录。
+2. 确认模型页能够从 OpenWebUI 加载模型和图标。
+3. 确认用户页与当前 OpenWebUI 用户列表一致。
+4. 配置一个模型的价格，然后在 OpenWebUI 中使用该模型完成一条消息。
+5. 确认状态提示、用量记录、已用余额和剩余余额显示同一笔费用。
+
+如果响应在 OpenWebUI 调用函数 outlet 并提供上游 usage 之前被停止，就无法获得精确的上游用量，该请求可能不会计费。同样，绕过全局函数钩子的 OpenWebUI 辅助请求也无法被 Monitor 观测。

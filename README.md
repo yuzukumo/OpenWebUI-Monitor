@@ -8,195 +8,149 @@
 
 </div>
 
-A monitoring dashboard for OpenWebUI that tracks usage and manages user balances. Simply add the bundled [function](./resources/functions/openwebui_monitor.py) to OpenWebUI to view user activity and balances in a unified panel.
+A usage-monitoring and balance-management dashboard for OpenWebUI. Install the bundled [filter function](./resources/functions/openwebui_monitor.py) in OpenWebUI to record model usage, calculate costs, and manage user balances from one panel.
 
-> **Note**: If you are using OpenWebUI 0.5.8 or above, make sure the installed [function](./resources/functions/openwebui_monitor.py) is kept in sync with this repository.
-
-> 💡 **Related Tool**: Auto-sync OpenAI & Claude model prices to your instance — [openwebui-monitor-sync](https://github.com/Yeraze/openwebui-monitor-sync) by [@Yeraze](https://github.com/Yeraze)
+> **Compatibility:** This fork follows the current OpenWebUI API instead of maintaining compatibility with old releases. The integration was last verified against OpenWebUI `v0.10.2`. Update the installed function whenever you update Monitor.
 
 ## Features
 
-- Choose token-based or per-request billing for each model; token billing supports per-model input/output guide prices and a multiplier
-- Charge chat and image requests based on model pricing, with end-of-chat usage notifications
-- Handle newer and older OpenWebUI usage payload shapes, including `usage`, `info.usage`, and legacy token fields
-- Sync the authoritative user list from OpenWebUI by stable user `id`, so renames update in place and deleted users disappear automatically
-- Track both `used balance` and `remaining balance`, with an admin action to reset a user's used balance
-- Keep the default user-management order aligned with the current OpenWebUI user list while preserving manual table sorting
-- View user data and usage visualizations
-- One-click test for all model availability
-- Reproducible end-to-end validation with the official OpenWebUI slim image, PostgreSQL 18, and Chromium
+- Select token-based or per-request billing independently for each model
+- Configure input and output prices plus a per-model multiplier for token billing
+- Configure one fixed price for per-request billing; token prices and multipliers are ignored in this mode
+- Store balances and costs as integer millionths and display six decimal places
+- Read current OpenWebUI usage payloads and omit large image data before sending billing requests
+- Synchronize the authoritative OpenWebUI user list by stable user ID, including renames, deletions, and list order
+- Track used and remaining balances, adjust remaining balance, and reset used balance independently
+- Synchronize billing settings from base models to derived models and proxy current model icons from OpenWebUI
+- Test model availability, inspect usage records and charts, and import or export database backups
+- Validate the Monitor UI and OpenWebUI API contract with PostgreSQL 18 and Chromium E2E tests
 
 ## Deployment
 
-Supports one-click deployment on Vercel [![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyuzukumo%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=openwebui-monitor&env=OPENWEBUI_DOMAIN,OPENWEBUI_API_KEY,ACCESS_TOKEN,API_KEY) and Docker deployment.
-
-See the [Deployment Guide](./resources/tutorials/en/deployment_guide.md) for detailed setup instructions.
-
-### Docker Quick Start
-
-This fork publishes its container image to GHCR:
+This fork publishes multi-architecture images for `linux/amd64` and `linux/arm64` to:
 
 ```text
 ghcr.io/yuzukumo/openwebui-monitor:latest
 ```
 
-Example `docker-compose.yml`:
+### Docker Compose
 
-```yaml
-services:
-    openwebui-monitor:
-        image: ghcr.io/yuzukumo/openwebui-monitor:latest
-        ports:
-            - '127.0.0.1:3003:3000'
-        environment:
-            - POSTGRES_HOST=${POSTGRES_HOST:-openwebui-monitor-db}
-            - POSTGRES_PORT=${POSTGRES_PORT:-5432}
-            - POSTGRES_USER=${POSTGRES_USER:-postgres}
-            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
-            - POSTGRES_DATABASE=${POSTGRES_DATABASE:-openwebui_monitor}
-            - OPENWEBUI_DOMAIN=${OPENWEBUI_DOMAIN:-http://open-webui:8080}
-            - OPENWEBUI_API_KEY=${OPENWEBUI_API_KEY}
-            - ACCESS_TOKEN=${ACCESS_TOKEN}
-            - API_KEY=${API_KEY}
-            - OPENWEBUI_USERS_SYNC_INTERVAL_MS=${OPENWEBUI_USERS_SYNC_INTERVAL_MS:-30000}
-        depends_on:
-            openwebui-monitor-db:
-                condition: service_healthy
-        restart: always
-
-    openwebui-monitor-db:
-        image: postgres:18-alpine
-        environment:
-            - POSTGRES_USER=${POSTGRES_USER:-postgres}
-            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openwebui}
-            - POSTGRES_DB=${POSTGRES_DATABASE:-openwebui_monitor}
-        volumes:
-            - postgres_data:/var/lib/postgresql
-        healthcheck:
-            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-postgres}']
-            interval: 5s
-            timeout: 5s
-            retries: 5
-        restart: always
-
-volumes:
-    postgres_data:
-```
-
-> **PostgreSQL 18 note**: for fresh Postgres 18 deployments, mount `/var/lib/postgresql`, not `/var/lib/postgresql/data`.
-
-## Updates
-
-For this fork, every push triggers GitHub Actions to build and publish the latest GHCR image.
-
-- Vercel: sync your fork and redeploy
-- Docker: pull the latest image and restart the container
+The repository [docker-compose.yml](./docker-compose.yml) is the maintained Compose configuration:
 
 ```bash
-sudo docker compose pull
-sudo docker compose up -d
+git clone https://github.com/yuzukumo/OpenWebUI-Monitor.git
+cd OpenWebUI-Monitor
+cp .env.example .env
+# Edit .env and set the required variables listed below.
+docker compose pull
+docker compose up -d
 ```
+
+The default Monitor address on the Docker host is `http://127.0.0.1:3003`. `OPENWEBUI_DOMAIN` must be reachable from the Monitor container, while the function's `Api Endpoint` must be reachable from the OpenWebUI container. Put both services on a shared Docker network or use addresses routable between them.
+
+For a fresh PostgreSQL 18 deployment, mount the volume at `/var/lib/postgresql`, as configured in this repository. An existing PostgreSQL 17-or-earlier data directory cannot be upgraded by only changing the image tag; migrate it with `pg_upgrade`, or remove the old volume only when its data is no longer needed.
+
+See the [Deployment Guide](./resources/tutorials/en/deployment_guide.md) for Vercel, external PostgreSQL, function installation, and update instructions.
+
+### Vercel
+
+[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyuzukumo%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=openwebui-monitor&env=OPENWEBUI_DOMAIN,OPENWEBUI_API_KEY,ACCESS_TOKEN,API_KEY)
+
+Vercel deployment requires a PostgreSQL provider exposed through `POSTGRES_URL` or `DATABASE_URL`. The OpenWebUI instance must also be reachable from the Vercel deployment.
 
 ## Environment Variables
 
 ### Required
 
-| Variable Name     | Description                                                                       | Example                    |
-| ----------------- | --------------------------------------------------------------------------------- | -------------------------- |
-| OPENWEBUI_DOMAIN  | OpenWebUI domain                                                                  | `https://chat.example.com` |
-| OPENWEBUI_API_KEY | OpenWebUI admin API key or admin JWT token, used for model fetching and user sync | `sk-xxxxxxxxxxxxxxxx`      |
-| API_KEY           | For API request verification (must be less than 56 characters)                    | `your-api-key-here`        |
-| ACCESS_TOKEN      | For page access verification                                                      | `your-access-token-here`   |
+| Variable            | Description                                                                         | Example                    |
+| ------------------- | ----------------------------------------------------------------------------------- | -------------------------- |
+| `OPENWEBUI_DOMAIN`  | OpenWebUI base URL reachable from Monitor                                           | `https://chat.example.com` |
+| `OPENWEBUI_API_KEY` | OpenWebUI admin API key or admin JWT used for model, icon, test, and user APIs      | `sk-xxxxxxxxxxxxxxxx`      |
+| `API_KEY`           | Shared secret used by the OpenWebUI function when calling Monitor inlet/outlet APIs | `generated-random-secret`  |
+| `ACCESS_TOKEN`      | Shared secret used to sign in to Monitor and authorize dashboard APIs               | `another-random-secret`    |
+
+OpenWebUI API keys must be enabled. If endpoint restrictions are enabled in OpenWebUI, the credential must be allowed to access the model, model-icon, chat-completions, and users endpoints. The credential must belong to an administrator because user synchronization calls `GET /api/v1/users/all`.
 
 ### Optional
 
-| Variable Name                    | Description                                                                                                                                 | Default Value       |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
-| POSTGRES_URL                     | PostgreSQL connection string. If set, it takes precedence over individual `POSTGRES_*` variables                                            | unset               |
-| DATABASE_URL                     | Alternative PostgreSQL connection string name, used if `POSTGRES_URL` is not set                                                            | unset               |
-| POSTGRES_HOST                    | PostgreSQL host                                                                                                                             | `db`                |
-| POSTGRES_PORT                    | PostgreSQL port                                                                                                                             | `5432`              |
-| POSTGRES_USER                    | PostgreSQL username                                                                                                                         | `postgres`          |
-| POSTGRES_PASSWORD                | PostgreSQL password                                                                                                                         | unset               |
-| POSTGRES_DATABASE                | PostgreSQL database name                                                                                                                    | `openwebui_monitor` |
-| DEFAULT_MODEL_INPUT_PRICE        | Default model input price, in USD per million tokens                                                                                        | `60`                |
-| DEFAULT_MODEL_OUTPUT_PRICE       | Default model output price, in USD per million tokens                                                                                       | `60`                |
-| DEFAULT_MODEL_PER_MSG_PRICE      | Default per-request model price; a negative value makes new models use token-based billing                                                  | `-1`                |
-| INIT_BALANCE                     | Initial user balance                                                                                                                        | `0`                 |
-| COST_ON_INLET                    | Pre-deduction amount on inlet. Can be a fixed number for all models (e.g. `0.1`), or model-specific format (e.g. `gpt-4:0.32,gpt-3.5:0.01`) | `0`                 |
-| OPENWEBUI_USERS_SYNC_INTERVAL_MS | Interval in milliseconds for refreshing the authoritative user list from OpenWebUI on the user-management API                               | `30000`             |
+| Variable                           | Description                                                                                              | Default             |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------- |
+| `POSTGRES_URL`                     | PostgreSQL connection string; takes precedence over individual `POSTGRES_*` variables                    | unset               |
+| `DATABASE_URL`                     | Fallback PostgreSQL connection string when `POSTGRES_URL` is unset                                       | unset               |
+| `POSTGRES_HOST`                    | PostgreSQL host                                                                                          | `db`                |
+| `POSTGRES_PORT`                    | PostgreSQL port                                                                                          | `5432`              |
+| `POSTGRES_USER`                    | PostgreSQL user                                                                                          | `postgres`          |
+| `POSTGRES_PASSWORD`                | PostgreSQL password                                                                                      | unset               |
+| `POSTGRES_DATABASE`                | PostgreSQL database                                                                                      | `openwebui_monitor` |
+| `DEFAULT_MODEL_INPUT_PRICE`        | Default input price per 1M tokens for new models                                                         | `60`                |
+| `DEFAULT_MODEL_OUTPUT_PRICE`       | Default output price per 1M tokens for new models                                                        | `60`                |
+| `DEFAULT_MODEL_PER_MSG_PRICE`      | Default per-request price; a negative value makes new models use token billing                           | `-1`                |
+| `INIT_BALANCE`                     | Initial remaining balance assigned to a newly synchronized user                                          | `0`                 |
+| `COST_ON_INLET`                    | Optional inlet pre-deduction, either one value or model-specific values such as `gpt-4:0.32,gpt-4o:0.01` | `0`                 |
+| `OPENWEBUI_USERS_SYNC_INTERVAL_MS` | Minimum interval between OpenWebUI user-list refreshes                                                   | `30000`             |
+
+## Billing
+
+For token billing, the configured input and output prices are the model prices per 1M tokens. The model multiplier is applied to both prices:
+
+```text
+effective price = configured price x model multiplier
+```
+
+When the multiplier is not `1`, the model page shows the calculated price as the primary value and places the configured price beneath it in smaller struck-through text. For per-request billing, Monitor charges the fixed per-request price and does not apply the multiplier.
+
+Token billing multiplies the configured prices, model multiplier, and token counts as fixed-point integers, then rounds once when producing the final six-decimal charge. All monetary values are persisted at six-decimal precision. Changing the interface language only changes the displayed currency symbol; it does not perform currency conversion.
+
+## Function Configuration
+
+Create a filter function in OpenWebUI from [openwebui_monitor.py](./resources/functions/openwebui_monitor.py), then configure:
+
+| Valve          | Description                                                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `Api Endpoint` | Monitor base URL reachable from the OpenWebUI container, such as `http://openwebui-monitor-app:3000` on a shared Docker network |
+| `Api Key`      | The same value as Monitor's `API_KEY`                                                                                           |
+| `Language`     | Status-message language: `en` or `zh`                                                                                           |
+
+Enable the function globally so normal chat requests pass through its inlet and outlet hooks. Exact upstream usage can only be billed after OpenWebUI invokes the outlet hook; a response stopped before outlet usage is available may not be charged.
+
+## Updates
+
+Every push to this fork runs GitHub Actions and publishes the multi-architecture `latest` image to GHCR. To update a Docker deployment:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+When the bundled function changes, replace the installed OpenWebUI function with the current repository version as part of the same update.
 
 ## Testing
 
-This repository includes a lightweight reproducible end-to-end test that boots PostgreSQL, starts a mock OpenWebUI HTTP server, starts the monitor, and validates the monitor with API checks and Chromium screenshots. The default E2E path does not start a real OpenWebUI container, so it is fast enough to run after routine changes.
-
-The E2E flow currently verifies:
-
-- monitor calls to the OpenWebUI models, model-icon, users, and chat-completions interfaces
-- user sync from OpenWebUI by stable `id`
-- rename handling without duplicate local users
-- automatic removal of users deleted in OpenWebUI
-- default user order matching the OpenWebUI user list
-- used-balance accumulation and reset behavior
-- low-cost billing precision
-- model icon loading through the monitor proxy
-- monitor UI rendering for home, models, users, records, and panel pages
+The default E2E test starts PostgreSQL 18, a mock OpenWebUI server, the real Monitor application, and Chromium in desktop and mobile viewports. It validates the Monitor UI, current OpenWebUI API calls, user synchronization, model pricing, billing precision, model icons, database migration, and balance operations.
 
 ```bash
 pnpm e2e:install
 pnpm e2e:owu
 ```
 
-For slower debugging against a real OpenWebUI slim container, run:
+The slower full test starts the official `ghcr.io/open-webui/open-webui:latest-slim` image:
 
 ```bash
 pnpm e2e:owu:full
 ```
 
-Artifacts are written to `artifacts/e2e/`, including logs, screenshots, and `summary.json`.
-
-## Function Variable Configuration
-
-| Variable Name | Description                                                                                                    |
-| ------------- | -------------------------------------------------------------------------------------------------------------- |
-| Api Endpoint  | Fill in your deployed OpenWebUI Monitor backend domain or IP address accessible within the OpenWebUI container |
-| Api Key       | Fill in the `API_KEY` environment variable set in the backend deployment                                       |
-| Language      | Message display language (`en` / `zh` / `es`)                                                                  |
+Artifacts are written to the ignored `artifacts/e2e/` directory.
 
 ## FAQ
 
-### 1. How to fill in the `OPENWEBUI_DOMAIN` environment variable?
+### Why are no users shown?
 
-The principle is that this address should be accessible from within the OpenWebUI Monitor container.
+Monitor synchronizes users from `GET /api/v1/users/all`. Confirm that `OPENWEBUI_DOMAIN` is reachable and that `OPENWEBUI_API_KEY` is an administrator credential allowed to call that endpoint. Users are matched by their OpenWebUI ID, so renaming a user does not create a duplicate and deleting a user removes it from the Monitor list on the next synchronization.
 
-- It is recommended to fill in the public domain name of OpenWebUI, for example `https://chat.example.com`.
-- If your OpenWebUI Monitor is deployed on the same machine, you can also fill in `http://[Docker host local ip]:[OpenWebUI backend service port]`. You can get the host's local IP through `ifconfig | grep "inet "`.
-- You **cannot** fill in `http://127.0.0.1:port` or omit `http://`.
+### What is the difference between used and remaining balance?
 
-### 2. How to fill in the `Api Endpoint` function parameter?
+Used balance is the cumulative amount already consumed. Remaining balance is the amount available for future requests. Resetting used balance does not change remaining balance.
 
-Fill in your deployed OpenWebUI Monitor backend domain or IP address accessible within the OpenWebUI container. For example `http://[host local ip]:7878`, where `7878` is the default port for OpenWebUI Monitor.
+### Where are model icons stored?
 
-### 3. What should I use for `OPENWEBUI_API_KEY`?
-
-Use an **admin** OpenWebUI credential that can call the users API.
-
-- An admin API key works
-- An admin JWT token also works
-
-If you create it from the OpenWebUI UI, use an admin account and make sure it can access the OpenWebUI users endpoints.
-
-### 4. Why can't I see users in the user management page?
-
-The monitor now refreshes the current OpenWebUI user list from `GET /api/v1/users/all` and matches users by stable OpenWebUI `id`, so renames update in place and users deleted in OpenWebUI disappear from the monitor automatically. If users still do not appear, check that `OPENWEBUI_API_KEY` is an admin credential that can access the OpenWebUI users API.
-
-### 5. What is the difference between `used balance` and `remaining balance`?
-
-- `used balance` is the cumulative amount already consumed by the user
-- `remaining balance` is the current balance still available for future requests
-
-Admins can reset a user's `used balance` to zero without changing the user's remaining balance.
-
-<h2>Gallery</h2>
-
-![](https://github.com/user-attachments/assets/63f23bfd-f271-41e8-a71c-2016be1d501a)
+Monitor does not persist model icons. It proxies the current icon from OpenWebUI with a short HTTP cache, so removed models do not leave image files in Monitor storage.

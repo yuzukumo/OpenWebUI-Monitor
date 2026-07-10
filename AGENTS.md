@@ -2,16 +2,17 @@
 
 ## Project Overview
 
-OpenWebUI Monitor is a Next.js 14 application for monitoring and analyzing OpenWebUI usage data. It tracks user balances, model pricing, and usage records with a PostgreSQL database backend.
+OpenWebUI Monitor is a Next.js 16 application for monitoring and analyzing OpenWebUI usage data. It tracks user balances, model pricing, and usage records with a PostgreSQL database backend.
 
 **Tech Stack:**
 
-- Next.js 14 (App Router)
+- Next.js 16 (App Router) with React 19
 - TypeScript (strict mode)
-- PostgreSQL with raw SQL queries (via `pg` and `@vercel/postgres`)
-- Tailwind CSS + shadcn/ui components
-- i18next for internationalization (en, zh, es)
-- pnpm package manager
+- PostgreSQL with raw SQL queries via `pg` and Vercel pool lifecycle integration
+- Tailwind CSS 4, shadcn/ui, and Ant Design components
+- i18next for internationalization (`en` and `zh`)
+- pnpm 11 package manager
+- Playwright with Chromium for end-to-end tests
 
 ---
 
@@ -34,9 +35,14 @@ pnpm format:check     # Check formatting without writing
 # Database
 pnpm db:generate      # Generate Drizzle migrations
 pnpm db:push          # Run database initialization script
+
+# End-to-end testing
+pnpm e2e:install      # Install Playwright Chromium
+pnpm e2e:owu          # Test Monitor with PostgreSQL and a mock OpenWebUI
+pnpm e2e:owu:full     # Test against the official OpenWebUI latest-slim image
 ```
 
-**No test suite is configured.** If adding tests, consider Vitest or Jest with React Testing Library.
+Run `pnpm e2e:owu` after substantial behavior or UI changes. The test writes ignored output to `artifacts/e2e/`.
 
 ---
 
@@ -185,7 +191,7 @@ lib/                   # Utilities and business logic
   auth.ts              # Token verification
 
 hooks/                 # Custom React hooks
-locales/               # i18n translation files (en, zh, es)
+locales/               # i18n translation files (en, zh)
 ```
 
 ### API Authentication
@@ -195,12 +201,12 @@ Two tokens are used:
 - `API_KEY`: For inlet/outlet endpoints (OpenWebUI function calls)
 - `ACCESS_TOKEN`: For panel/config/users/models endpoints (dashboard access)
 
-Authentication is handled in `middleware.ts` and `lib/auth.ts`.
+Authentication is handled in `proxy.ts` and `lib/auth.ts`.
 
 ### Database Patterns
 
 - Raw SQL queries via the `query()` function in `lib/db/client.ts`
-- Supports both Vercel Postgres and standard PostgreSQL
+- Supports PostgreSQL connection strings used by Vercel providers and standard PostgreSQL connection fields
 - Tables are auto-created on first access (`ensureTablesExist`)
 - Use parameterized queries to prevent SQL injection:
 

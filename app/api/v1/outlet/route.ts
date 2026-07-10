@@ -5,7 +5,6 @@ import { ensureTablesExist, query, withTransaction } from '@/lib/db/client'
 import { getOrCreateUser } from '@/lib/db/users'
 import {
     MAX_BALANCE_MICROS,
-    applyPriceMultiplier,
     calculateTokenCostMicros,
     decimalToMicros,
     microsToDecimalString,
@@ -169,8 +168,8 @@ async function getModelPrice(
 
         return {
             ...row,
-            input_price: applyPriceMultiplier(row.input_price, multiplier),
-            output_price: applyPriceMultiplier(row.output_price, multiplier),
+            input_price: row.input_price,
+            output_price: row.output_price,
             per_msg_price: row.per_msg_price,
             price_multiplier: multiplier,
             billing_mode: billingMode,
@@ -294,6 +293,7 @@ export async function POST(req: Request) {
                     outputTokens,
                     inputPrice: modelPrice.input_price,
                     outputPrice: modelPrice.output_price,
+                    priceMultiplier: modelPrice.price_multiplier,
                 })
             }
 

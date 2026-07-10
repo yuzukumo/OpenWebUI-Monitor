@@ -25,7 +25,8 @@ interface EditableCellProps {
     }
     isPerMsgPrice?: boolean
     suffix?: string
-    strikeThrough?: boolean
+    displayValue?: number
+    formatValue?: (value: number) => string
 }
 
 export function EditableCell({
@@ -41,10 +42,12 @@ export function EditableCell({
     validateValue = () => ({ isValid: true }),
     isPerMsgPrice = false,
     suffix,
-    strikeThrough = false,
+    displayValue,
+    formatValue = formatMoney,
 }: EditableCellProps) {
     const numericValue = typeof value === 'number' ? value : Number(value)
-    const originalValue = numericValue >= 0 ? formatMoney(numericValue) : ''
+    const renderedValue = displayValue ?? numericValue
+    const originalValue = numericValue >= 0 ? formatValue(numericValue) : ''
     const [inputValue, setInputValue] = useState(originalValue)
     const [isSaving, setIsSaving] = useState(false)
 
@@ -188,9 +191,7 @@ export function EditableCell({
             ${
                 disabled
                     ? 'cursor-not-allowed line-through'
-                    : `cursor-pointer hover:bg-primary/5 ${
-                          strikeThrough ? 'line-through' : ''
-                      }`
+                    : 'cursor-pointer hover:bg-primary/5'
             }
           `}
                 >
@@ -213,7 +214,7 @@ export function EditableCell({
                             </span>
                         ) : (
                             <>
-                                {formatMoney(numericValue)}
+                                {formatValue(renderedValue)}
                                 {suffix && (
                                     <span className="ml-0.5 text-muted-foreground">
                                         {suffix}

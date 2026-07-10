@@ -38,7 +38,7 @@
         "menu": {
             "copyApiKey": "Copy API KEY",
             "dataBackup": "Data Migration",
-            "checkUpdate": "Check Update",
+            "sourceCode": "Source Code",
             "logout": "Logout",
             "settings": "Settings",
             "title": "Options"
@@ -46,17 +46,7 @@
         "messages": {
             "unauthorized": "Unauthorized, please login again",
             "apiKeyNotSet": "API key not set or failed to load",
-            "apiKeyCopied": "API key copied to clipboard",
-            "updateCheckFailed": "Failed to check for updates",
-            "latestVersion": "Current version is up to date",
-            "getVersionFailed": "Failed to get version number"
-        },
-        "update": {
-            "newVersion": "New Version Available",
-            "currentVersion": "Current Version",
-            "latestVersion": "Latest Version",
-            "skipUpdate": "Skip Update",
-            "goToUpdate": "Go to Update"
+            "apiKeyCopied": "API key copied to clipboard"
         },
         "language": {
             "zh": "中",
@@ -125,10 +115,10 @@
                 "request": "Per Request"
             },
             "priceConfiguration": "Price Configuration",
-            "inputPrice": "Input Guide $ / M tokens",
-            "outputPrice": "Output Guide $ / M tokens",
-            "perRequestPrice": "Per-request Price $ / Request",
-            "priceMultiplier": "Multiplier",
+            "inputPrice": "Input Price $ / M tokens",
+            "outputPrice": "Output Price $ / M tokens",
+            "perRequestPrice": "Fixed Price $ / Request",
+            "priceMultiplier": "Model Multiplier",
             "enterPrice": "Enter price",
             "enterMultiplier": "Enter multiplier"
         },
@@ -219,16 +209,6 @@
             "time": "Time",
             "balance": "Balance"
         }
-    },
-
-    "update": {
-        "newVersion": "New Version Available",
-        "currentVersion": "Current Version",
-        "latestVersion": "Latest Version",
-        "ignore": "Ignore",
-        "update": "Update",
-        "skipUpdate": "Skip Update",
-        "goToUpdate": "Go to Update"
     },
 
     "backup": {

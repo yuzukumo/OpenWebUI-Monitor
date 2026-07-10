@@ -1,11 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { FiDatabase, FiUsers, FiBarChart2, FiGithub } from 'react-icons/fi'
-import { CloseOutlined } from '@ant-design/icons'
-import { APP_VERSION } from '@/lib/version'
-import { message } from 'antd'
 import { useTranslation } from 'react-i18next'
 import { motion } from 'framer-motion'
 import { AnimatedGridPattern } from '@/components/ui/animated-grid-pattern'
@@ -13,50 +9,6 @@ import { cn } from '@/lib/utils'
 
 export default function HomePage() {
     const { t } = useTranslation('common')
-    const [isUpdateVisible, setIsUpdateVisible] = useState(false)
-    const [latestVersion, setLatestVersion] = useState('')
-
-    useEffect(() => {
-        const checkUpdate = async () => {
-            try {
-                const response = await fetch(
-                    'https://api.github.com/repos/variantconst/openwebui-monitor/releases/latest'
-                )
-                const data = await response.json()
-                const latestVer = data.tag_name
-                if (!latestVer) {
-                    return
-                }
-
-                const currentVer = APP_VERSION.replace(/^v/, '')
-                const newVer = latestVer.replace(/^v/, '')
-
-                const ignoredVersion = localStorage.getItem('ignoredVersion')
-                if (currentVer !== newVer && ignoredVersion !== latestVer) {
-                    setLatestVersion(latestVer)
-                    setIsUpdateVisible(true)
-                }
-            } catch (error) {
-                console.error(t('header.messages.updateCheckFailed'), error)
-            }
-        }
-
-        checkUpdate()
-    }, [t])
-
-    const handleUpdate = () => {
-        window.open(
-            'https://github.com/VariantConst/OpenWebUI-Monitor/releases/latest',
-            '_blank'
-        )
-        setIsUpdateVisible(false)
-    }
-
-    const handleIgnore = () => {
-        localStorage.setItem('ignoredVersion', latestVersion)
-        setIsUpdateVisible(false)
-        message.success(t('update.ignore'))
-    }
 
     return (
         <main className="relative min-h-screen w-full overflow-hidden bg-gradient-to-br from-rose-50 via-slate-50 to-teal-50 pt-16">
@@ -236,7 +188,7 @@ export default function HomePage() {
                     className="py-8 text-center"
                 >
                     <a
-                        href="https://github.com/VariantConst/OpenWebUI-Monitor"
+                        href="https://github.com/yuzukumo/OpenWebUI-Monitor"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex p-2 text-slate-400 hover:text-slate-600 transition-colors"
@@ -245,43 +197,6 @@ export default function HomePage() {
                     </a>
                 </motion.div>
             </motion.div>
-
-            {isUpdateVisible && (
-                <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="fixed bottom-4 right-4 z-50 w-auto max-w-[calc(100%-2rem)]"
-                >
-                    <div className="bg-white rounded-lg shadow-2xl p-3 border border-gray-200 w-fit">
-                        <div className="flex items-center gap-2 text-gray-600 text-sm">
-                            <span className="whitespace-nowrap">
-                                {t('update.newVersion')} {latestVersion}
-                            </span>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={handleIgnore}
-                                    className="text-xs hover:text-gray-900 transition-colors"
-                                >
-                                    {t('update.ignore')}
-                                </button>
-                                <span className="text-gray-300">|</span>
-                                <button
-                                    onClick={handleUpdate}
-                                    className="text-xs text-blue-500 hover:text-blue-600 transition-colors"
-                                >
-                                    {t('update.update')}
-                                </button>
-                            </div>
-                            <button
-                                onClick={() => setIsUpdateVisible(false)}
-                                className="text-gray-400 hover:text-gray-500 ml-1"
-                            >
-                                <CloseOutlined className="text-[10px]" />
-                            </button>
-                        </div>
-                    </div>
-                </motion.div>
-            )}
         </main>
     )
 }

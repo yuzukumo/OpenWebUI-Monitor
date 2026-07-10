@@ -1,93 +1,145 @@
-# OpenWebUI Monitor Deployment Detailed Guide
+# OpenWebUI Monitor Deployment Guide
 
-OpenWebUI Monitor is designed to work alongside [OpenWebUI](https://github.com/open-webui/open-webui). You should already have a fully functioning OpenWebUI instance with a public domain. To use OpenWebUI Monitor, you'll need to deploy a backend server and install a function plugin in OpenWebUI.
+OpenWebUI Monitor requires:
 
-## 1. Deploying the Backend Server
+- a current OpenWebUI instance
+- PostgreSQL
+- network access from Monitor to OpenWebUI
+- network access from OpenWebUI to Monitor
+- the current [OpenWebUI Monitor filter function](../../functions/openwebui_monitor.py)
 
-### Method 1: Deploy on Vercel
+The integration was last verified against OpenWebUI `v0.10.2`. This fork follows the current OpenWebUI API and does not target older OpenWebUI releases.
 
-1. Click the button below to fork this repository and deploy it to Vercel with one click.
+## 1. Docker Compose Deployment
 
-[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FVariantConst%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=OpenWebUI-Monitor)
+Docker Compose is the recommended deployment method. The maintained configuration uses the public multi-architecture image at `ghcr.io/yuzukumo/openwebui-monitor:latest` and PostgreSQL 18.
 
-2. Configure the environment variables. Go to the **Settings** section of your project on Vercel, open **Environment Variables**, and add the following:
-
-- `OPENWEBUI_DOMAIN`: The domain of your OpenWebUI instance, e.g., `https://chat.example.com`
-- `OPENWEBUI_API_KEY`: The API Key for OpenWebUI, which can be found in **User Settings -> Account -> API Keys**
-  <img width="877" alt="image" src="https://github.com/user-attachments/assets/f52554ea-27b2-4654-9820-c302766541ee">
-- `API_KEY`: This is the key you'll use later in the OpenWebUI function plugin configuration as the `Api Key`. Use a strong password generator like [1Password](https://1password.com/) to create this. The length must be less than 56 characters.
-- `ACCESS_TOKEN`: A password required to access the OpenWebUI Monitor webpage.
-- `INIT_BALANCE` (optional): The initial balance for users, e.g., `1.14`.
-- `COST_ON_INLET` (optional): Pre-deduction amount when a chat starts. Can be configured as:
-    - A fixed number for all models, e.g., `0.1`
-    - Model-specific format, e.g., `gpt-4:0.32,gpt-3.5:0.01`
-
-3. Navigate to the **Storage** section of the project and create or connect to a Neon Postgres database.
-   <img width="1138" alt="image" src="https://github.com/user-attachments/assets/365e6dea-5d25-42ab-9421-766e2633f389">
-
-4. Go back to the **Deployments** page and redeploy the project.
-   <img width="1492" alt="image" src="https://github.com/user-attachments/assets/45ed44d0-6b1a-43a8-a093-c5068b36d596">
-
-The deployment is now complete. Note the domain assigned by Vercel or add a custom domain in the settings. This domain will be used as the `Api Endpoint` in the OpenWebUI function plugin.
-
-> **Note:** Due to Vercel's free plan limitations, database connections may be slow, and token calculations for each message could take up to 2 seconds. If you have your own server, it's recommended to use the Docker Compose method for deployment.
-
-### Method 2: Deploy with Docker Compose
-
-1. Clone this repository:
+### 1.1 Prepare the configuration
 
 ```bash
-git clone https://github.com/VariantConst/OpenWebUI-Monitor.git
-```
-
-2. Configure environment variables:
-
-```bash
+git clone https://github.com/yuzukumo/OpenWebUI-Monitor.git
+cd OpenWebUI-Monitor
 cp .env.example .env
 ```
 
-Edit the .env file. If you plan to connect to an existing Postgres database, uncomment and fill in the `POSTGRES_*` variables. If `POSTGRES_HOST` is not specified, a new Postgres container will be automatically created during deployment.
+Set at least these values in `.env`:
 
-3. Start the Docker container. Run the following command in the project root directory:
-
-```bash
-sudo docker compose up -d
+```dotenv
+OPENWEBUI_DOMAIN=https://chat.example.com
+OPENWEBUI_API_KEY=your-openwebui-admin-api-key-or-jwt
+ACCESS_TOKEN=your-monitor-login-secret
+API_KEY=your-function-shared-secret
 ```
 
-The deployment is now complete! Publish the site to the public as needed. To modify the port, edit the ports section in the docker-compose.yml file by changing the number before the colon (`:`).
+- `OPENWEBUI_DOMAIN` is resolved by the Monitor container. Do not use `127.0.0.1` unless OpenWebUI runs in the same container.
+- `OPENWEBUI_API_KEY` must belong to an OpenWebUI administrator. OpenWebUI API keys must be enabled, and any endpoint restriction must allow `/api/models`, `/api/v1/models/model/profile/image`, `/api/chat/completions`, and `/api/v1/users/all`.
+- `ACCESS_TOKEN` protects the Monitor UI and dashboard APIs.
+- `API_KEY` is the shared secret used only between the OpenWebUI function and Monitor inlet/outlet APIs.
 
-## 2. Installing the OpenWebUI Function Plugin (Choose One)
+Generate independent random values for `ACCESS_TOKEN` and `API_KEY`. They do not need to be an OpenWebUI JWT or API key.
 
-<details>
-<summary><strong>Method 1 (Recommended): Explicit Billing Information Display Function</strong></summary>
+### 1.2 Start Monitor
 
-1. Open the Functions page in the OpenWebUI Admin Panel. Click + to create a new function, then paste the code from [this function](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/openwebui_monitor.py) and save it.
+```bash
+docker compose pull
+docker compose up -d
+```
 
-2. Fill in the configuration:
+The default host address is `http://127.0.0.1:3003`. The container listens on port `3000` inside its Docker network.
 
-- `Api Key`: The `API_KEY` set in the Vercel environment variables.
-- `Api Endpoint`: The domain or local network address of your deployed OpenWebUI Monitor instance, e.g., `https://openwebui-monitor.vercel.app` or `http://192.168.x.xxx:7878`.
+```bash
+docker compose ps
+docker compose logs -f openwebui-monitor
+```
 
-3. Enable the function and click ... to open detailed settings. Globally enable the function.
+### 1.3 PostgreSQL 18 data directory
 
-<img width="1097" alt="image" src="https://github.com/user-attachments/assets/6cb5094a-5a03-4719-bc0a-11c5c871498f">
+The bundled database mounts its volume at `/var/lib/postgresql`, which is required by the PostgreSQL 18 image layout.
 
-4. This function will display billing information at the top of each reply message by default.
+Do not point PostgreSQL 18 directly at a PostgreSQL 17-or-earlier volume previously mounted at `/var/lib/postgresql/data`. Choose one of these paths:
 
-</details>
-<details>
-<summary><strong>Method 2: Implicit (Manually Triggered) Billing Information Display Function</strong></summary>
+1. Preserve the data by performing a PostgreSQL major-version migration with `pg_upgrade` or dump/restore.
+2. If the old Monitor data is intentionally disposable, stop the deployment and delete the old volume before starting PostgreSQL 18.
 
-If you prefer implicit billing display, use [this function](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/openwebui_monitor_invisible.py) instead. Follow the same steps to enable and configure the function globally. Additionally, you'll need to install an Action function plugin.
+Deleting a volume is irreversible. Verify its name and back up anything needed before removal.
 
-- Action Function
+### 1.4 External PostgreSQL
 
-Similarly, add a new function and paste the code from the [Action function](https://github.com/VariantConst/OpenWebUI-Monitor/blob/main/resources/functions/get_usage_button.py), save it, enable it, and configure it globally. This function will handle the billing information display options that were previously managed by the billing plugin.
+The application supports `POSTGRES_URL`, `DATABASE_URL`, or individual `POSTGRES_*` variables. When adapting the repository Compose file for an external database, remove the bundled `openwebui-monitor-db` service and the app service's `depends_on` entry, then provide the external connection settings. The application creates and migrates its tables on startup.
 
-- Usage
+## 2. Vercel Deployment
 
-![CleanShot 2024-12-10 at 13 41 08](https://github.com/user-attachments/assets/e999d022-339e-41d3-9bf9-a6f8d9877fe8)
+[![Deploy on Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fyuzukumo%2FOpenWebUI-Monitor&project-name=openwebui-monitor&repository-name=openwebui-monitor&env=OPENWEBUI_DOMAIN,OPENWEBUI_API_KEY,ACCESS_TOKEN,API_KEY)
 
-Click the "Billing Information" button at the bottom to display the message. Note that this method can only show billing information for the latest (bottom-most) message in the conversation.
+1. Deploy this fork with the button above.
+2. Add `OPENWEBUI_DOMAIN`, `OPENWEBUI_API_KEY`, `ACCESS_TOKEN`, and `API_KEY` to the Vercel project environment.
+3. Create or attach a PostgreSQL provider and expose its connection string as `POSTGRES_URL` or `DATABASE_URL`.
+4. Redeploy after all environment variables are available.
 
-</details>
+The OpenWebUI URL must be reachable from Vercel. The Vercel Monitor URL must also be reachable from the OpenWebUI container because it becomes the function's `Api Endpoint`.
+
+## 3. Install the OpenWebUI Function
+
+The currently supported integration is [openwebui_monitor.py](../../functions/openwebui_monitor.py).
+
+1. Sign in to OpenWebUI as an administrator and open the Functions page.
+2. Create a function, paste the current contents of `openwebui_monitor.py`, and save it.
+3. Configure the function valves:
+
+| Valve          | Value                                                             |
+| -------------- | ----------------------------------------------------------------- |
+| `Api Endpoint` | Monitor URL reachable from OpenWebUI, without a trailing API path |
+| `Api Key`      | The same value as Monitor's `API_KEY`                             |
+| `Language`     | `en` or `zh`                                                      |
+
+4. Enable the function globally.
+
+On a shared Docker network, `Api Endpoint` can use the Monitor container and internal port:
+
+```text
+http://openwebui-monitor-app:3000
+```
+
+If OpenWebUI and Monitor belong to separate Compose projects, attach them to a shared external network or use an address routable from the OpenWebUI container. The host-bound `127.0.0.1:3003` address is not the OpenWebUI container's loopback address.
+
+The function sends request metadata to `/api/v1/inlet` before a request and sends the completed message with upstream usage to `/api/v1/outlet`. It strips large inline image data before forwarding the payload. Keep the installed function synchronized with the repository when Monitor is updated.
+
+## 4. Configure Model Billing
+
+Open the Monitor model-management page after signing in with `ACCESS_TOKEN`.
+
+### Token billing
+
+Set the input price, output price, and model multiplier. Prices are per 1M tokens:
+
+```text
+effective input price = input price x model multiplier
+effective output price = output price x model multiplier
+```
+
+### Per-request billing
+
+Set one fixed per-request price. Monitor ignores input/output prices and the model multiplier in this mode.
+
+For an OpenWebUI derived model, the sync action copies the billing mode and all relevant pricing fields from its base model.
+
+## 5. Update
+
+Every push to this fork builds native `amd64` and `arm64` images and publishes a multi-architecture `latest` manifest to GHCR.
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Review changes to `resources/functions/openwebui_monitor.py` and update the installed OpenWebUI function at the same time.
+
+## 6. Verify
+
+1. Open Monitor at `http://127.0.0.1:3003` or its reverse-proxy URL and sign in with `ACCESS_TOKEN`.
+2. Confirm that the model page loads models and icons from OpenWebUI.
+3. Confirm that the user page matches the current OpenWebUI user list.
+4. Configure a model price and send a completed OpenWebUI message through that model.
+5. Confirm that the status line, usage record, used balance, and remaining balance show the same charge.
+
+If a response is stopped before OpenWebUI invokes the function outlet with upstream usage, an exact upstream charge is unavailable and that request may not be billed. Likewise, OpenWebUI auxiliary requests that bypass globally enabled function hooks cannot be observed by Monitor.
