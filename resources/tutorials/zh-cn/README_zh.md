@@ -111,7 +111,7 @@ OpenWebUI 必须启用 API Key。若启用了 API 端点限制，该凭证需要
 | `Api Key`      | 与 Monitor `API_KEY` 完全相同的值                                                                       |
 | `Language`     | 状态消息语言：`en` 或 `zh`                                                                              |
 
-请全局启用该函数，使普通对话请求经过 inlet 和 outlet。只有 OpenWebUI 调用 outlet 并提供 usage 后才能按上游精确用量计费；如果响应在 outlet usage 可用前被停止，该请求可能不会计费。
+请全局启用该函数，使普通对话请求经过 inlet、stream 和 outlet。按次计费依据没有失败标记的完成回调，而不是补全 token 数，因此成功的生图响应即使上游返回 0 个输出 token，也会正常收取固定价格。部分自定义 Pipe 会把异常包装成 SSE 后继续进入 outlet，函数会在 stream 阶段识别并标记这类明确错误，失败请求和未进入 outlet 的取消请求都不会通过 outlet 扣费；显式配置的 `COST_ON_INLET` 预扣除是独立逻辑。
 
 ## 更新
 
@@ -126,7 +126,7 @@ docker compose up -d
 
 ## 测试
 
-默认 E2E 会启动 PostgreSQL 18、模拟 OpenWebUI 服务、真实 Monitor 应用，并使用 Chromium 的桌面与移动端视口进行验证。覆盖 Monitor 页面、当前 OpenWebUI API 调用、用户同步、模型定价、计费精度、模型图标、数据库迁移和余额操作。
+默认 E2E 会先在不启动 OpenWebUI 的情况下检查过滤器的成功/失败状态处理，再启动 PostgreSQL 18、模拟 OpenWebUI 服务、真实 Monitor 应用，并使用 Chromium 的桌面与移动端视口进行验证。覆盖零输出 token 的按次计费、Monitor 页面、当前 OpenWebUI API 调用、用户同步、模型定价、计费精度、模型图标、数据库迁移和余额操作。
 
 ```bash
 pnpm e2e:install

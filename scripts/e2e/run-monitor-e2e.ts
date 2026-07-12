@@ -1604,11 +1604,24 @@ async function main() {
                         },
                         {
                             role: 'assistant',
-                            content: 'Fixed price response',
+                            content: '',
+                            output: [
+                                {
+                                    type: 'message',
+                                    status: 'completed',
+                                    content: [
+                                        {
+                                            type: 'output_image',
+                                            image_url:
+                                                'https://example.com/image',
+                                        },
+                                    ],
+                                },
+                            ],
                             usage: {
-                                input_tokens: 2,
-                                output_tokens: 1,
-                                total_tokens: 3,
+                                input_tokens: 123,
+                                output_tokens: 0,
+                                total_tokens: 123,
                             },
                         },
                     ],
@@ -1625,17 +1638,24 @@ async function main() {
         const recordsWithRequestBilling = await waitForRecords(
             (record) =>
                 record.model_name === 'custom.gpt-4o-mini' &&
-                record.input_tokens === 2 &&
-                record.output_tokens === 1
+                record.input_tokens === 123 &&
+                record.output_tokens === 0
         )
         const requestRecord = recordsWithRequestBilling.records.find(
             (record) =>
                 record.model_name === 'custom.gpt-4o-mini' &&
-                record.input_tokens === 2 &&
-                record.output_tokens === 1
+                record.input_tokens === 123 &&
+                record.output_tokens === 0
         )
-        assert(requestRecord, 'Missing per-request usage record')
-        assert.equal(Number(requestRecord.cost), 0.02)
+        assert(
+            requestRecord,
+            'Missing per-request usage record for a zero-token completion'
+        )
+        assert.equal(
+            Number(requestRecord.cost),
+            0.02,
+            'A successful per-request response must be charged even when output tokens are zero'
+        )
 
         const balanceUpdate = await requestJson<MonitorUser>(
             `${MONITOR_BASE_URL}/api/v1/users/${ADMIN_USER.id}/balance`,

@@ -102,7 +102,7 @@ http://openwebui-monitor-app:3000
 
 如果 OpenWebUI 与 Monitor 属于不同的 Compose 项目，请将它们接入同一外部网络，或使用 OpenWebUI 容器能够路由到的地址。宿主机绑定的 `127.0.0.1:3003` 并不是 OpenWebUI 容器自身回环地址。
 
-函数会在请求前向 `/api/v1/inlet` 发送请求信息，并在请求完成后将带有上游 usage 的消息发送到 `/api/v1/outlet`。发送前会移除大体积内联图片数据。更新 Monitor 时，请保持 OpenWebUI 中安装的函数与仓库版本一致。
+函数会在请求前向 `/api/v1/inlet` 发送请求信息，并在完成后将带有上游 usage 的消息发送到 `/api/v1/outlet`。按次计费不使用补全 token 数判断成功与否，成功的生图响应即使输出 token 为 0 也会正常计费。部分自定义 Pipe 会把异常包装成 SSE 后继续进入 outlet，函数会在 stream 阶段识别并标记这类明确错误，使失败请求不被计费；未进入 outlet 的取消请求同样不会通过 outlet 扣费。发送前会移除大体积内联图片数据。更新 Monitor 时，请保持 OpenWebUI 中安装的函数与仓库版本一致。
 
 ## 四、配置模型计费
 
@@ -142,4 +142,4 @@ docker compose up -d
 4. 配置一个模型的价格，然后在 OpenWebUI 中使用该模型完成一条消息。
 5. 确认状态提示、用量记录、已用余额和剩余余额显示同一笔费用。
 
-如果响应在 OpenWebUI 调用函数 outlet 并提供上游 usage 之前被停止，就无法获得精确的上游用量，该请求可能不会计费。同样，绕过全局函数钩子的 OpenWebUI 辅助请求也无法被 Monitor 观测。
+如果响应在 OpenWebUI 调用函数 outlet 之前被停止，该请求不会通过 outlet 扣费。同样，绕过全局函数钩子的 OpenWebUI 辅助请求也无法被 Monitor 观测；显式配置的 `COST_ON_INLET` 预扣除不受此规则影响。

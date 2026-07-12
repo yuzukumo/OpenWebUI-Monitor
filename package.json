@@ -15,7 +15,7 @@
         "db:generate": "drizzle-kit generate:pg",
         "db:push": "tsx scripts/init-db.ts",
         "e2e:install": "playwright install chromium",
-        "e2e:owu": "tsx scripts/e2e/run-monitor-e2e.ts",
+        "e2e:owu": "python3 -B scripts/e2e/test-monitor-filter.py && tsx scripts/e2e/run-monitor-e2e.ts",
         "e2e:owu:full": "tsx scripts/e2e/run-openwebui-monitor-e2e.ts"
     },
     "dependencies": {

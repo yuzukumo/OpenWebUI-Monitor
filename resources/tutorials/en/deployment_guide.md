@@ -102,7 +102,7 @@ http://openwebui-monitor-app:3000
 
 If OpenWebUI and Monitor belong to separate Compose projects, attach them to a shared external network or use an address routable from the OpenWebUI container. The host-bound `127.0.0.1:3003` address is not the OpenWebUI container's loopback address.
 
-The function sends request metadata to `/api/v1/inlet` before a request and sends the completed message with upstream usage to `/api/v1/outlet`. It strips large inline image data before forwarding the payload. Keep the installed function synchronized with the repository when Monitor is updated.
+The function sends request metadata to `/api/v1/inlet` before a request and sends the completed message with upstream usage to `/api/v1/outlet`. Per-request billing uses a completed outlet callback instead of completion-token count, so a successful image response with zero output tokens is still charged. The stream hook marks explicit provider errors because some custom Pipes can route an SSE error through outlet; marked failures and cancelled responses that never reach outlet are not charged. The function strips large inline image data before forwarding the payload. Keep the installed function synchronized with the repository when Monitor is updated.
 
 ## 4. Configure Model Billing
 
@@ -142,4 +142,4 @@ Review changes to `resources/functions/openwebui_monitor.py` and update the inst
 4. Configure a model price and send a completed OpenWebUI message through that model.
 5. Confirm that the status line, usage record, used balance, and remaining balance show the same charge.
 
-If a response is stopped before OpenWebUI invokes the function outlet with upstream usage, an exact upstream charge is unavailable and that request may not be billed. Likewise, OpenWebUI auxiliary requests that bypass globally enabled function hooks cannot be observed by Monitor.
+If a response is stopped before OpenWebUI invokes the function outlet, the request is not billed by the outlet path. Likewise, OpenWebUI auxiliary requests that bypass globally enabled function hooks cannot be observed by Monitor. An explicitly configured `COST_ON_INLET` pre-charge is applied independently.

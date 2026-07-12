@@ -272,10 +272,7 @@ export async function POST(req: Request) {
             }
 
             let totalCostMicros: bigint
-            if (outputTokens === 0) {
-                totalCostMicros = BigInt(0)
-                console.log('No charge for zero output tokens')
-            } else if (modelPrice.billing_mode === 'request') {
+            if (modelPrice.billing_mode === 'request') {
                 if (Number(modelPrice.per_msg_price) < 0) {
                     throw new Error(
                         `Invalid per-request price for model ${modelId}`
@@ -287,6 +284,12 @@ export async function POST(req: Request) {
                         totalCostMicros
                     )} (${modelPrice.per_msg_price} per message)`
                 )
+            } else if (outputTokens === 0) {
+                // A completed non-text response, such as image generation, can
+                // legitimately report zero completion tokens. Only token billing
+                // uses that value as a reason to produce no token charge.
+                totalCostMicros = BigInt(0)
+                console.log('No charge for zero output tokens')
             } else {
                 totalCostMicros = calculateTokenCostMicros({
                     inputTokens,

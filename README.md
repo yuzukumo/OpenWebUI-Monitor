@@ -111,7 +111,7 @@ Create a filter function in OpenWebUI from [openwebui_monitor.py](./resources/fu
 | `Api Key`      | The same value as Monitor's `API_KEY`                                                                                           |
 | `Language`     | Status-message language: `en` or `zh`                                                                                           |
 
-Enable the function globally so normal chat requests pass through its inlet and outlet hooks. Exact upstream usage can only be billed after OpenWebUI invokes the outlet hook; a response stopped before outlet usage is available may not be charged.
+Enable the function globally so normal chat requests pass through its inlet, stream, and outlet hooks. Per-request billing uses a completed outlet callback instead of completion-token count, so a valid image response is charged even when it reports zero output tokens. The function tracks explicit stream errors because some custom Pipes can route an SSE error through outlet; those failures, and cancelled responses that never reach outlet, are not charged. An explicitly configured `COST_ON_INLET` pre-charge is a separate exception.
 
 ## Updates
 
@@ -126,7 +126,7 @@ When the bundled function changes, replace the installed OpenWebUI function with
 
 ## Testing
 
-The default E2E test starts PostgreSQL 18, a mock OpenWebUI server, the real Monitor application, and Chromium in desktop and mobile viewports. It validates the Monitor UI, current OpenWebUI API calls, user synchronization, model pricing, billing precision, model icons, database migration, and balance operations.
+The default E2E test first checks the filter's success/failure state handling without starting OpenWebUI, then starts PostgreSQL 18, a mock OpenWebUI server, the real Monitor application, and Chromium in desktop and mobile viewports. It validates zero-token request billing, the Monitor UI, current OpenWebUI API calls, user synchronization, model pricing, billing precision, model icons, database migration, and balance operations.
 
 ```bash
 pnpm e2e:install

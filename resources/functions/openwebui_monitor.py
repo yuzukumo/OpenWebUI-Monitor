@@ -9,7 +9,7 @@ license: MIT
 
 import logging
 import time
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from httpx import AsyncClient
 from pydantic import BaseModel, Field
 import json
@@ -17,6 +17,8 @@ import json
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+FAILED_REQUEST_METADATA_KEY = "_openwebui_monitor_request_failed"
 
 TRANSLATIONS = {
     "en": {
@@ -104,6 +106,41 @@ class Filter:
 
         return value
 
+    @staticmethod
+    def _is_failure_event(event: Any) -> bool:
+        """Identify terminal provider/Pipe errors without inspecting token counts."""
+        if not isinstance(event, dict):
+            return False
+
+        if "error" in event and event.get("error") is not None:
+            return True
+
+        event_type = event.get("type")
+        if isinstance(event_type, str) and event_type in {
+            "error",
+            "chat:message:error",
+            "response.failed",
+        }:
+            return True
+
+        response = event.get("response")
+        return isinstance(response, dict) and response.get("status") == "failed"
+
+    @classmethod
+    def _body_has_failure(cls, body: Any) -> bool:
+        """Handle failure markers preserved in an outlet payload as a fallback."""
+        if not isinstance(body, dict):
+            return False
+
+        if cls._is_failure_event(body):
+            return True
+
+        messages = body.get("messages")
+        if isinstance(messages, list) and messages:
+            return cls._is_failure_event(messages[-1])
+
+        return False
+
     async def request(
         self, client: AsyncClient, url: str, headers: dict, json_data: dict
     ):
@@ -138,9 +175,13 @@ class Filter:
         __user__: Optional[dict] = None,
     ) -> dict:
         __user__ = __user__ or {}
-        __metadata__ = __metadata__ or {}
+        __metadata__ = {} if __metadata__ is None else __metadata__
         self.start_time = time.time()
         user_id = __user__.get("id", "default")
+
+        # Metadata is shared by OpenWebUI's inlet, stream, and outlet stages
+        # for one request. Clear a stale marker before starting a new request.
+        __metadata__.pop(FAILED_REQUEST_METADATA_KEY, None)
 
         client = AsyncClient()
 
@@ -178,6 +219,22 @@ class Filter:
         finally:
             await client.aclose()
 
+    async def stream(
+        self,
+        event: dict,
+        __metadata__: Optional[dict] = None,
+    ) -> dict:
+        """Remember explicit stream failures for the matching outlet call.
+
+        OpenWebUI can turn exceptions raised inside a Pipe's StreamingResponse
+        into an SSE error event. That response still reaches the outlet stage,
+        so the outlet callback must carry the failure state forward explicitly.
+        """
+        if self._is_failure_event(event) and isinstance(__metadata__, dict):
+            __metadata__[FAILED_REQUEST_METADATA_KEY] = True
+
+        return event
+
     async def outlet(
         self,
         body: dict,
@@ -185,9 +242,18 @@ class Filter:
         __user__: Optional[dict] = None,
         __event_emitter__: Optional[callable] = None,
     ) -> dict:
+        # Standard responses reach outlet after completion. Some streaming Pipe
+        # errors are also routed here, so stream() records those explicitly.
+        # Token counts are not a success signal: image responses can report zero.
         __user__ = __user__ or {}
-        __metadata__ = __metadata__ or {}
+        __metadata__ = {} if __metadata__ is None else __metadata__
         user_id = __user__.get("id", "default")
+
+        if __metadata__.get(FAILED_REQUEST_METADATA_KEY) or self._body_has_failure(
+            body
+        ):
+            logger.info("Skipping usage charge for a failed OpenWebUI request")
+            return body
 
         if self.outage_map.get(user_id, False):
             return body
