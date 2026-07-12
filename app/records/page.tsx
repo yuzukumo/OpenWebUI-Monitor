@@ -49,7 +49,7 @@ export default function RecordsPage() {
     const [tableParams, setTableParams] = useState<TableParams>({
         pagination: {
             current: 1,
-            pageSize: 10,
+            pageSize: 50,
             total: 0,
         },
     })
@@ -149,7 +149,7 @@ export default function RecordsPage() {
             )
             searchParams.append(
                 'pageSize',
-                params.pagination.pageSize?.toString() || '10'
+                params.pagination.pageSize?.toString() || '50'
             )
 
             if (params.sortField) {
@@ -352,6 +352,8 @@ export default function RecordsPage() {
                                     pagination={{
                                         ...tableParams.pagination,
                                         className: '!justify-end',
+                                        showSizeChanger: true,
+                                        pageSizeOptions: ['10', '50', '100'],
                                         showTotal: (total) =>
                                             `${t('common.total')} ${total} ${t('common.count')}`,
                                     }}

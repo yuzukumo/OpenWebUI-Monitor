@@ -649,7 +649,7 @@ interface GetUsersOptions {
 
 export async function getUsers({
     page = 1,
-    pageSize = 20,
+    pageSize = 50,
     sortField = null,
     sortOrder = null,
     search = null,

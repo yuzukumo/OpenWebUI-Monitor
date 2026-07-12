@@ -4,6 +4,15 @@ import { verifyApiToken } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'
 
+const SORT_COLUMNS: Record<string, string> = {
+    nickname: 'nickname',
+    use_time: 'use_time',
+    model_name: 'model_name',
+    tokens: 'input_tokens + output_tokens',
+    cost: 'cost',
+    balance_after: 'balance_after',
+}
+
 export async function GET(req: Request) {
     const authError = verifyApiToken(req)
     if (authError) {
@@ -12,8 +21,14 @@ export async function GET(req: Request) {
 
     try {
         const { searchParams } = new URL(req.url)
-        const page = parseInt(searchParams.get('page') || '1')
-        const pageSize = parseInt(searchParams.get('pageSize') || '10')
+        const page = Math.max(parseInt(searchParams.get('page') || '1', 10), 1)
+        const requestedPageSize = parseInt(
+            searchParams.get('pageSize') || '50',
+            10
+        )
+        const pageSize = [10, 50, 100].includes(requestedPageSize)
+            ? requestedPageSize
+            : 50
         const sortField = searchParams.get('sortField')
         const sortOrder = searchParams.get('sortOrder')
         const users = searchParams.get('users')?.split(',') || []
@@ -49,8 +64,9 @@ export async function GET(req: Request) {
         const whereClause =
             conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : ''
 
-        const orderClause = sortField
-            ? `ORDER BY ${sortField} ${sortOrder === 'descend' ? 'DESC' : 'ASC'}`
+        const sortColumn = sortField ? SORT_COLUMNS[sortField] : null
+        const orderClause = sortColumn
+            ? `ORDER BY ${sortColumn} ${sortOrder === 'descend' ? 'DESC' : 'ASC'}`
             : 'ORDER BY use_time DESC'
 
         const countQuery = `

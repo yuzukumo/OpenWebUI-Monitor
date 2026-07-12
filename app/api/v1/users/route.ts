@@ -19,10 +19,13 @@ export async function GET(req: NextRequest) {
 
         const { searchParams } = new URL(req.url)
         const page = Math.max(parseInt(searchParams.get('page') || '1', 10), 1)
-        const pageSize = Math.max(
-            parseInt(searchParams.get('pageSize') || '20', 10),
-            1
+        const requestedPageSize = parseInt(
+            searchParams.get('pageSize') || '50',
+            10
         )
+        const pageSize = [10, 50, 100].includes(requestedPageSize)
+            ? requestedPageSize
+            : 50
         const sortField = searchParams.get('sortField')
         const sortOrder = searchParams.get('sortOrder')
         const search = searchParams.get('search')

@@ -66,8 +66,6 @@ export async function proxy(request: NextRequest) {
         response.headers.set('Expires', '0')
 
         return response
-    } else if (pathname.startsWith('/api/config/key')) {
-        return NextResponse.next()
     } else if (pathname.startsWith('/api/init')) {
         return NextResponse.next()
     }

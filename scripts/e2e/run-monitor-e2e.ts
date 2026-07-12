@@ -600,36 +600,6 @@ async function startMockOpenWebUI(port: number): Promise<MockOpenWebUIServer> {
             return sendJson(response, 200, [...state.users].reverse())
         }
 
-        if (
-            request.method === 'POST' &&
-            url.pathname === '/api/chat/completions'
-        ) {
-            return sendJson(response, 200, {
-                id: 'chatcmpl-monitor-e2e',
-                object: 'chat.completion',
-                created: Math.floor(Date.now() / 1000),
-                model:
-                    typeof body?.model === 'string'
-                        ? body.model
-                        : 'gpt-4o-mini',
-                choices: [
-                    {
-                        index: 0,
-                        finish_reason: 'stop',
-                        message: {
-                            role: 'assistant',
-                            content: 'hi from mock OpenWebUI',
-                        },
-                    },
-                ],
-                usage: {
-                    prompt_tokens: 9,
-                    completion_tokens: 4,
-                    total_tokens: 13,
-                },
-            })
-        }
-
         return sendJson(response, 404, {
             error: `Unsupported mock OpenWebUI route: ${request.method} ${url.pathname}`,
         })
@@ -919,7 +889,11 @@ async function runChromiumChecks() {
         await waitForVisibleText(page, 'Billing Method')
         await waitForVisibleText(page, 'Price Configuration')
         await waitForVisibleText(page, 'Input Price')
-        await assertDarkActionButtonIsReadable(page, 'Test All Models')
+        assert.equal(
+            await page.getByText('Test All Models', { exact: true }).count(),
+            0,
+            'Removed model testing action is still visible'
+        )
         await assertDarkActionButtonIsReadable(page, 'Sync All Derived Models')
         await waitForLoadedImageAlt(page, 'gpt-4o-mini')
 
@@ -1159,13 +1133,185 @@ async function runChromiumChecks() {
             path: screenshots.models_mobile,
             fullPage: true,
         })
+
+        const initialMobileUsersRequest = mobilePage.waitForRequest(
+            (request) => {
+                const url = new URL(request.url())
+                return (
+                    url.pathname === '/api/v1/users' &&
+                    url.searchParams.get('pageSize') === '50'
+                )
+            }
+        )
+        await mobilePage.goto(`${MONITOR_BASE_URL}/users`, {
+            waitUntil: 'networkidle',
+        })
+        await initialMobileUsersRequest
+        await waitForVisibleText(mobilePage, 'User Management')
+
+        const mobileSearchForm = mobilePage.getByTestId('user-search')
+        const mobileSearchInput = mobileSearchForm.getByRole('searchbox')
+        const mobileSearchButton = mobileSearchForm.getByRole('button', {
+            name: 'Search',
+            exact: true,
+        })
+        const mobileSearchInputBox = await mobileSearchInput.boundingBox()
+        const mobileSearchButtonBox = await mobileSearchButton.boundingBox()
+        assert(mobileSearchInputBox, 'Missing mobile search input bounds')
+        assert(mobileSearchButtonBox, 'Missing mobile search button bounds')
+        assert(
+            mobileSearchInputBox.x + mobileSearchInputBox.width <=
+                mobileSearchButtonBox.x,
+            'Mobile search input overlaps the search button'
+        )
+
+        await mobileSearchInput.fill(ADMIN_USER.email)
+        const mobileClearButton = mobileSearchForm.getByRole('button', {
+            name: 'Close',
+        })
+        const filledMobileSearchInputBox = await mobileSearchInput.boundingBox()
+        const mobileClearButtonBox = await mobileClearButton.boundingBox()
+        assert(
+            filledMobileSearchInputBox,
+            'Missing filled mobile search input bounds'
+        )
+        assert(mobileClearButtonBox, 'Missing mobile clear button bounds')
+        assert(
+            filledMobileSearchInputBox.x + filledMobileSearchInputBox.width <=
+                mobileClearButtonBox.x,
+            'Mobile search input overlaps the clear button'
+        )
+        assert(
+            mobileClearButtonBox.x + mobileClearButtonBox.width <=
+                mobileSearchButtonBox.x,
+            'Mobile clear button overlaps the search button'
+        )
+
+        screenshots.users_mobile = path.join(
+            SCREENSHOTS_DIR,
+            'users-mobile.png'
+        )
+        await mobilePage.screenshot({
+            path: screenshots.users_mobile,
+            fullPage: true,
+        })
         await mobilePage.close()
 
+        const initialUsersRequest = page.waitForRequest((request) => {
+            const url = new URL(request.url())
+            return (
+                url.pathname === '/api/v1/users' &&
+                url.searchParams.get('pageSize') === '50'
+            )
+        })
         await page.goto(`${MONITOR_BASE_URL}/users`, {
             waitUntil: 'networkidle',
         })
+        await initialUsersRequest
         await waitForVisibleText(page, 'User Management')
         await waitForVisibleText(page, ADMIN_USER.email)
+
+        const searchForm = page.getByTestId('user-search')
+        const searchInput = searchForm.getByRole('searchbox')
+        const searchButton = searchForm.getByRole('button', {
+            name: 'Search',
+            exact: true,
+        })
+        const initialSearchInputBox = await searchInput.boundingBox()
+        const searchButtonBox = await searchButton.boundingBox()
+        assert(initialSearchInputBox, 'Missing user search input bounds')
+        assert(searchButtonBox, 'Missing user search button bounds')
+        assert(
+            initialSearchInputBox.x + initialSearchInputBox.width <=
+                searchButtonBox.x,
+            'User search input overlaps the search button'
+        )
+
+        await searchInput.fill(ADMIN_USER.email)
+        const clearButton = searchForm.getByRole('button', { name: 'Close' })
+        const filledSearchInputBox = await searchInput.boundingBox()
+        const clearButtonBox = await clearButton.boundingBox()
+        assert(filledSearchInputBox, 'Missing filled search input bounds')
+        assert(clearButtonBox, 'Missing user search clear button bounds')
+        assert(
+            filledSearchInputBox.x + filledSearchInputBox.width <=
+                clearButtonBox.x,
+            'User search input overlaps the clear button'
+        )
+
+        const filteredUsersRequest = page.waitForResponse((response) => {
+            const url = new URL(response.url())
+            return (
+                url.pathname === '/api/v1/users' &&
+                url.searchParams.get('pageSize') === '50' &&
+                url.searchParams.get('search') === ADMIN_USER.email
+            )
+        })
+        await searchButton.click()
+        assert((await filteredUsersRequest).ok(), 'User search request failed')
+        await waitForVisibleText(page, ADMIN_USER.email)
+
+        const clearedUsersRequest = page.waitForResponse((response) => {
+            const url = new URL(response.url())
+            return (
+                url.pathname === '/api/v1/users' &&
+                url.searchParams.get('pageSize') === '50' &&
+                !url.searchParams.has('search')
+            )
+        })
+        await clearButton.click()
+        assert((await clearedUsersRequest).ok(), 'Clearing user search failed')
+
+        const userRow = page.locator(`tr[data-row-key="${ADMIN_USER.id}"]`)
+        const userRowBox = await userRow.boundingBox()
+        assert(userRowBox, 'Missing user row bounds')
+        assert(userRowBox.height <= 80, 'User table row is not compact')
+        const resetButton = userRow.getByTestId(
+            `reset-used-balance-${ADMIN_USER.id}`
+        )
+        assert.equal(
+            await resetButton.evaluate(
+                (element) => window.getComputedStyle(element).whiteSpace
+            ),
+            'nowrap',
+            'Reset used balance action can wrap onto multiple lines'
+        )
+        assert(
+            await resetButton.isEnabled(),
+            'Reset used balance action should be enabled for used balance'
+        )
+        await resetButton.click()
+        const resetDialog = page.getByRole('dialog')
+        await resetDialog.waitFor({ state: 'visible' })
+        await waitForVisibleText(page, 'Reset used balance?')
+        const resetResponsePromise = page.waitForResponse(
+            (response) =>
+                response
+                    .url()
+                    .includes(
+                        `/api/v1/users/${ADMIN_USER.id}/used-balance/reset`
+                    ) && response.request().method() === 'POST'
+        )
+        await resetDialog
+            .getByRole('button', { name: 'Confirm', exact: true })
+            .click()
+        assert(
+            (await resetResponsePromise).ok(),
+            'Confirmed used balance reset failed'
+        )
+        await page.waitForFunction((userId) => {
+            const row = document.querySelector(`tr[data-row-key="${userId}"]`)
+            return row?.children[1]?.textContent?.includes('0.000000')
+        }, ADMIN_USER.id)
+        assert(
+            (
+                await page
+                    .locator('.ant-pagination-options')
+                    .first()
+                    .innerText()
+            ).includes('50'),
+            'User page size selector does not default to 50'
+        )
         screenshots.users = path.join(SCREENSHOTS_DIR, 'users.png')
         await page.screenshot({ path: screenshots.users, fullPage: true })
         await assertTailwindStylesApplied(page)
@@ -1183,6 +1329,40 @@ async function runChromiumChecks() {
             waitUntil: 'networkidle',
         })
         await waitForVisibleText(page, 'Usage Statistics')
+        const usageTable = page.locator('.ant-table-wrapper').last()
+        const usagePagination = usageTable.locator('.ant-pagination')
+        await usagePagination.waitFor({ state: 'visible' })
+        assert(
+            (
+                await usagePagination
+                    .locator('.ant-pagination-options')
+                    .innerText()
+            ).includes('50'),
+            'Usage details page size selector does not default to 50'
+        )
+        assert.equal(
+            await usagePagination.evaluate(
+                (element) => window.getComputedStyle(element).borderTopWidth
+            ),
+            '0px',
+            'Usage details pagination has an extra top border'
+        )
+        const totalBox = await usagePagination
+            .locator('.ant-pagination-total-text')
+            .boundingBox()
+        const previousBox = await usagePagination
+            .locator('.ant-pagination-prev')
+            .boundingBox()
+        assert(totalBox, 'Missing usage total bounds')
+        assert(previousBox, 'Missing usage previous-page bounds')
+        assert(
+            Math.abs(
+                totalBox.y +
+                    totalBox.height / 2 -
+                    (previousBox.y + previousBox.height / 2)
+            ) <= 2,
+            'Usage total is not vertically aligned with pagination controls'
+        )
         screenshots.panel = path.join(SCREENSHOTS_DIR, 'panel.png')
         await page.screenshot({ path: screenshots.panel, fullPage: true })
         await assertTailwindStylesApplied(page)
@@ -1352,21 +1532,6 @@ async function main() {
             mockOpenWebUI.state,
             'GET',
             '/api/v1/models/model/profile/image'
-        )
-
-        const { data: modelTest } = await requestJson<{ success: boolean }>(
-            `${MONITOR_BASE_URL}/api/v1/models/test`,
-            {
-                method: 'POST',
-                headers: jsonHeaders(),
-                body: JSON.stringify({ modelId: 'gpt-4o-mini' }),
-            }
-        )
-        assert(modelTest?.success, 'Model test API did not succeed')
-        assertAuthorizedOpenWebUIRequest(
-            mockOpenWebUI.state,
-            'POST',
-            '/api/chat/completions'
         )
 
         logStep('Checking user sync against mock OpenWebUI users API')
@@ -1671,19 +1836,6 @@ async function main() {
             'Balance update API failed'
         )
 
-        const resetUsedBalance = await requestJson<{
-            success: boolean
-            user: MonitorUser
-        }>(
-            `${MONITOR_BASE_URL}/api/v1/users/${ADMIN_USER.id}/used-balance/reset`,
-            {
-                method: 'POST',
-                headers: authHeaders(),
-            }
-        )
-        assert(resetUsedBalance.data?.success, 'Used balance reset failed')
-        assert.equal(Number(resetUsedBalance.data.user.used_balance), 0)
-
         logStep('Checking monitor pages in Chromium')
         const chromiumChecks = await runChromiumChecks()
 
@@ -1697,7 +1849,6 @@ async function main() {
                 models: true,
                 model_icon: true,
                 users: true,
-                chat_completions: true,
             },
             user_sync: {
                 rename_verified: true,

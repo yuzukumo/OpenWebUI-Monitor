@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Table, TablePaginationConfig, Select } from 'antd'
+import { Pagination, Select, Table } from 'antd'
+import type { TablePaginationConfig } from 'antd'
 import type { FilterValue } from 'antd/es/table/interface'
 import type { SorterResult } from 'antd/es/table/interface'
 import dayjs from '@/lib/dayjs'
@@ -110,7 +111,7 @@ export default function UsageRecordsTable({
             [field]: value,
         }
         setFilters(newFilters)
-        onTableChange(tableParams.pagination, newFilters, {})
+        onTableChange({ ...tableParams.pagination, current: 1 }, newFilters, {})
     }
 
     const columns = [
@@ -217,21 +218,26 @@ export default function UsageRecordsTable({
                     onChange={onTableChange}
                     pagination={{
                         ...tableParams.pagination,
-                        className: 'px-2',
-                        showTotal: (total) => `${t('common.total')} ${total}`,
+                        showSizeChanger: true,
+                        pageSizeOptions: ['10', '50', '100'],
+                        showTotal: (total) => (
+                            <span className="inline-flex h-8 items-center whitespace-nowrap">
+                                {t('common.total')} {total}
+                            </span>
+                        ),
                         itemRender: (page, type, originalElement) => {
                             if (type === 'prev') {
                                 return (
-                                    <button className="px-2 py-0.5 hover:text-primary">
+                                    <span className="inline-flex h-8 items-center whitespace-nowrap px-2 hover:text-primary">
                                         {t('common.prev')}
-                                    </button>
+                                    </span>
                                 )
                             }
                             if (type === 'next') {
                                 return (
-                                    <button className="px-2 py-0.5 hover:text-primary">
+                                    <span className="inline-flex h-8 items-center whitespace-nowrap px-2 hover:text-primary">
                                         {t('common.next')}
-                                    </button>
+                                    </span>
                                 )
                             }
                             return originalElement
@@ -239,7 +245,7 @@ export default function UsageRecordsTable({
                     }}
                     rowKey="id"
                     scroll={{ x: 800 }}
-                    className="bg-background rounded-md border [&_.ant-table-thead]:bg-muted [&_.ant-table-thead>tr>th]:bg-transparent [&_.ant-table-thead>tr>th]:text-muted-foreground [&_.ant-table-tbody>tr>td]:border-muted [&_.ant-table-tbody>tr:last-child>td]:border-b-0 [&_.ant-table-tbody>tr:hover>td]:bg-muted/50 [&_.ant-pagination]:flex [&_.ant-pagination]:items-center [&_.ant-pagination]:px-2 [&_.ant-pagination]:py-4 [&_.ant-pagination]:border-t [&_.ant-pagination]:border-muted [&_.ant-pagination-item]:border-muted [&_.ant-pagination-item]:bg-transparent [&_.ant-pagination-item]:hover:border-primary [&_.ant-pagination-item]:hover:text-primary [&_.ant-pagination-item-active]:border-primary [&_.ant-pagination-item-active]:text-primary [&_.ant-pagination-item-active]:bg-transparent [&_.ant-pagination-prev]:hover:text-primary [&_.ant-pagination-next]:hover:text-primary [&_.ant-pagination-prev>button]:hover:border-primary [&_.ant-pagination-next>button]:hover:border-primary [&_.ant-pagination-options]:ml-auto [&_.ant-select]:border-muted [&_.ant-select]:hover:border-primary [&_.ant-select-focused]:border-primary"
+                    className="overflow-hidden rounded-md border bg-background [&_.ant-table-thead]:bg-muted [&_.ant-table-thead>tr>th]:bg-transparent [&_.ant-table-thead>tr>th]:text-muted-foreground [&_.ant-table-tbody>tr>td]:border-muted [&_.ant-table-tbody>tr:last-child>td]:!border-b-0 [&_.ant-table-tbody>tr:hover>td]:bg-muted/50 [&_.ant-pagination]:!m-0 [&_.ant-pagination]:flex [&_.ant-pagination]:items-center [&_.ant-pagination]:px-4 [&_.ant-pagination]:py-3 [&_.ant-pagination-item]:border-muted [&_.ant-pagination-item]:bg-transparent [&_.ant-pagination-item]:hover:border-primary [&_.ant-pagination-item]:hover:text-primary [&_.ant-pagination-item-active]:border-primary [&_.ant-pagination-item-active]:bg-transparent [&_.ant-pagination-item-active]:text-primary [&_.ant-pagination-prev]:hover:text-primary [&_.ant-pagination-next]:hover:text-primary [&_.ant-pagination-options]:!ml-auto [&_.ant-pagination-options]:inline-flex [&_.ant-pagination-options]:h-8 [&_.ant-pagination-options]:items-center [&_.ant-pagination-total-text]:inline-flex [&_.ant-pagination-total-text]:h-8 [&_.ant-pagination-total-text]:items-center [&_.ant-select]:border-muted [&_.ant-select]:hover:border-primary [&_.ant-select-focused]:border-primary"
                 />
             </div>
 
@@ -259,17 +265,24 @@ export default function UsageRecordsTable({
                                 />
                             ))}
                         </div>
-                        <Table
-                            dataSource={[]}
-                            loading={loading}
-                            onChange={onTableChange}
-                            pagination={{
-                                ...tableParams.pagination,
-                                size: 'small',
-                                className:
-                                    'flex justify-center [&_.ant-pagination-options]:hidden',
-                            }}
-                            className="[&_.ant-pagination]:!mt-0 [&_.ant-table]:hidden [&_.ant-pagination-item]:!bg-white"
+                        <Pagination
+                            {...tableParams.pagination}
+                            showSizeChanger
+                            responsive
+                            size="small"
+                            pageSizeOptions={['10', '50', '100']}
+                            onChange={(page, pageSize) =>
+                                onTableChange(
+                                    {
+                                        ...tableParams.pagination,
+                                        current: page,
+                                        pageSize,
+                                    },
+                                    filters,
+                                    {}
+                                )
+                            }
+                            className="flex flex-wrap justify-center gap-y-2 [&_.ant-pagination-options]:!ml-0"
                         />
                     </>
                 )}

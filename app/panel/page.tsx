@@ -99,7 +99,7 @@ export default function PanelPage() {
     const [tableParams, setTableParams] = useState<TableParams>({
         pagination: {
             current: 1,
-            pageSize: 10,
+            pageSize: 50,
             total: 0,
         },
         filters: {
@@ -154,7 +154,7 @@ export default function PanelPage() {
             )
             searchParams.append(
                 'pageSize',
-                params.pagination.pageSize?.toString() || '10'
+                params.pagination.pageSize?.toString() || '50'
             )
 
             if (params.sortField) {

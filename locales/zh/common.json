@@ -74,7 +74,6 @@
     "models": {
         "title": "模型管理",
         "description": "为每个模型选择按量或按次计费，并配置对应价格。",
-        "testAll": "测试全部模型",
         "exportConfig": "导出配置",
         "importConfig": "导入配置",
         "syncWithBaseModel": "同步上游模型价格",
@@ -88,25 +87,6 @@
         "noDerivedModels": "没有找到派生模型",
         "syncing": "同步中",
         "syncTooltip": "将基础模型的计费方式、价格和倍率同步到所有派生模型。",
-        "testTooltip": "点击模型图标可进行单独测试，测试结果将显示在图标右上角。",
-        "test": {
-            "status": {
-                "valid": "有效",
-                "invalid": "无效",
-                "pending": "等待中",
-                "testing": "测试中",
-                "complete": "测试完成"
-            },
-            "progress": {
-                "title": "测试进度",
-                "detail": "点击卡片查看详细信息"
-            },
-            "result": {
-                "success": "有效模型",
-                "failed": "无效模型",
-                "complete": "测试完成，点击卡片查看详细信息"
-            }
-        },
         "table": {
             "name": "模型",
             "billingMode": "计费方式",
@@ -122,11 +102,6 @@
             "enterPrice": "输入价格",
             "enterMultiplier": "输入倍率"
         },
-        "testing": "测试中",
-        "testComplete": "测试完成",
-        "testingModels": "正在测试模型",
-        "testSuccess": "测试成功",
-        "testFailed": "测试失败",
         "loading": "正在加载模型数据..."
     },
 
@@ -138,6 +113,10 @@
         "usedBalance": "已用余额",
         "remainingBalance": "剩余余额",
         "resetUsedBalance": "清零已用",
+        "resetConfirm": {
+            "title": "确认清零已用余额",
+            "description": "确定要将用户“{{name}}”的已用余额清零吗？此操作不会修改其剩余余额。"
+        },
         "id": "ID",
         "name": "姓名",
         "email": "邮箱",
@@ -295,9 +274,6 @@
         "model": {
             "failToFetchModels": "获取模型失败",
             "unknownError": "未知错误",
-            "failToFetchApiKey": "获取 API KEY 失败",
-            "ApiKeyNotConfigured": "API KEY 未配置",
-            "ApiKeyNotFetched": "API KEY 未获取",
             "nonePositiveNumber": "请输入有效的正数",
             "invalidNumber": "请输入有效的数字",
             "priceUpdateFail": "更新价格失败",
@@ -308,9 +284,7 @@
             "updateSuccess": "成功更新",
             "numberOfModelPrice": "个模型的价格",
             "failToImport": "导入失败",
-            "failToExport": "导出失败",
-            "failToTest": "测试失败",
-            "failToTestWithoutApiKey": "API Key 未获取，无法进行测试"
+            "failToExport": "导出失败"
         },
         "panel": {
             "fetchUsageDataFail": "获取使用数据失败"

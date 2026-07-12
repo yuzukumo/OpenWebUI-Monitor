@@ -89,7 +89,6 @@ interface DatabaseExportPayload {
 
 interface ApiCheckSummary {
     models_page: string
-    model_test: { status: number; success: boolean }
     sync_all: { status: number; success: boolean }
     records_export: { status: number }
     database_export: { status: number }
@@ -2028,15 +2027,6 @@ async function runMonitorApiChecks(): Promise<ApiCheckSummary> {
         'Monitor models API did not return gpt-4o-mini'
     )
 
-    const modelTest = await requestJson<{ success: boolean }>(
-        `${MONITOR_BASE_URL}/api/v1/models/test`,
-        {
-            method: 'POST',
-            headers: jsonHeaders(MONITOR_ACCESS_TOKEN),
-            body: JSON.stringify({ modelId: 'gpt-4o-mini' }),
-        }
-    )
-
     const syncAll = await requestJson<{ success: boolean }>(
         `${MONITOR_BASE_URL}/api/v1/models/sync-all-prices`,
         {
@@ -2074,10 +2064,6 @@ async function runMonitorApiChecks(): Promise<ApiCheckSummary> {
 
     return {
         models_page: 'ok',
-        model_test: {
-            status: modelTest.status,
-            success: Boolean(modelTest.data?.success),
-        },
         sync_all: {
             status: syncAll.status,
             success: Boolean(syncAll.data?.success),
@@ -2237,6 +2223,10 @@ async function runChromiumChecks(
                 `[data-testid="reset-used-balance-${adminUserId}"]:visible`
             )
             .first()
+            .click()
+        await page
+            .getByRole('dialog')
+            .getByRole('button', { name: 'Confirm' })
             .click()
         await resetUsedBalanceResponse
         await page.waitForTimeout(750)

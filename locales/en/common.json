@@ -74,7 +74,6 @@
     "models": {
         "title": "Model Management",
         "description": "Choose token-based or per-request billing for each model and configure its price.",
-        "testAll": "Test All Models",
         "exportConfig": "Export",
         "importConfig": "Import",
         "syncWithBaseModel": "Sync with Base Model",
@@ -88,25 +87,6 @@
         "noDerivedModels": "No derived models found",
         "syncing": "Syncing",
         "syncTooltip": "Sync billing mode, prices, and multiplier from base models to all derived models.",
-        "testTooltip": "Click model icon to test individually, test results will be shown in the top right corner of the icon.",
-        "test": {
-            "status": {
-                "valid": "Valid",
-                "invalid": "Invalid",
-                "pending": "Pending",
-                "testing": "Testing",
-                "complete": "Complete"
-            },
-            "progress": {
-                "title": "Test Progress",
-                "detail": "Click card for details"
-            },
-            "result": {
-                "success": "Valid Models",
-                "failed": "Invalid Models",
-                "complete": "Test complete, click card for details"
-            }
-        },
         "table": {
             "name": "Model",
             "billingMode": "Billing Method",
@@ -122,11 +102,6 @@
             "enterPrice": "Enter price",
             "enterMultiplier": "Enter multiplier"
         },
-        "testing": "Testing",
-        "testComplete": "Test Complete",
-        "testingModels": "Testing Models",
-        "testSuccess": "Success",
-        "testFailed": "Failed",
         "loading": "Loading model data..."
     },
 
@@ -138,6 +113,10 @@
         "usedBalance": "Used Balance",
         "remainingBalance": "Remaining Balance",
         "resetUsedBalance": "Reset Used",
+        "resetConfirm": {
+            "title": "Reset used balance?",
+            "description": "Reset the used balance for \"{{name}}\"? This will not change their remaining balance."
+        },
         "id": "ID",
         "name": "Name",
         "email": "Email",
@@ -295,9 +274,6 @@
         "model": {
             "failToFetchModels": "Failed to fetch models",
             "unknownError": "Unknown error",
-            "failToFetchApiKey": "Failed to fetch API KEY",
-            "ApiKeyNotConfigured": "API KEY not configured",
-            "ApiKeyNotFetched": "API KEY not fetched",
             "nonePositiveNumber": "Please enter a valid positive number",
             "invalidNumber": "Please enter a valid number",
             "priceUpdateFail": "Failed to update price",
@@ -308,9 +284,7 @@
             "updateSuccess": "Update successful",
             "numberOfModelPrice": "model(s) price",
             "failToImport": "Import failed",
-            "failToExport": "Export failed",
-            "failToTest": "Test failed",
-            "failToTestWithoutApiKey": "API Key not fetched, unable to test"
+            "failToExport": "Export failed"
         },
         "panel": {
             "fetchUsageDataFail": "Failed to fetch usage data"
