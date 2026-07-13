@@ -1329,14 +1329,11 @@ async function runChromiumChecks() {
             waitUntil: 'networkidle',
         })
         await waitForVisibleText(page, 'Usage Statistics')
-        const usageTable = page.locator('.ant-table-wrapper').last()
-        const usagePagination = usageTable.locator('.ant-pagination')
+        const usagePagination = page.getByTestId('usage-pagination')
         await usagePagination.waitFor({ state: 'visible' })
         assert(
             (
-                await usagePagination
-                    .locator('.ant-pagination-options')
-                    .innerText()
+                await usagePagination.getByTestId('usage-page-size').innerText()
             ).includes('50'),
             'Usage details page size selector does not default to 50'
         )
@@ -1348,16 +1345,17 @@ async function runChromiumChecks() {
             'Usage details pagination has an extra top border'
         )
         const totalBox = await usagePagination
-            .locator('.ant-pagination-total-text')
+            .getByTestId('usage-total')
             .boundingBox()
-        const previousBox = await usagePagination
+        const pageNavigation = usagePagination.locator('.ant-pagination')
+        const previousBox = await pageNavigation
             .locator('.ant-pagination-prev')
             .boundingBox()
-        const nextBox = await usagePagination
+        const nextBox = await pageNavigation
             .locator('.ant-pagination-next')
             .boundingBox()
         const optionsBox = await usagePagination
-            .locator('.ant-pagination-options')
+            .getByTestId('usage-page-size')
             .boundingBox()
         const paginationBox = await usagePagination.boundingBox()
         assert(totalBox, 'Missing usage total bounds')
