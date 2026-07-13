@@ -1353,8 +1353,18 @@ async function runChromiumChecks() {
         const previousBox = await usagePagination
             .locator('.ant-pagination-prev')
             .boundingBox()
+        const nextBox = await usagePagination
+            .locator('.ant-pagination-next')
+            .boundingBox()
+        const optionsBox = await usagePagination
+            .locator('.ant-pagination-options')
+            .boundingBox()
+        const paginationBox = await usagePagination.boundingBox()
         assert(totalBox, 'Missing usage total bounds')
         assert(previousBox, 'Missing usage previous-page bounds')
+        assert(nextBox, 'Missing usage next-page bounds')
+        assert(optionsBox, 'Missing usage page-size bounds')
+        assert(paginationBox, 'Missing usage pagination bounds')
         assert(
             Math.abs(
                 totalBox.y +
@@ -1362,6 +1372,19 @@ async function runChromiumChecks() {
                     (previousBox.y + previousBox.height / 2)
             ) <= 2,
             'Usage total is not vertically aligned with pagination controls'
+        )
+        assert(
+            Math.abs(
+                (previousBox.x + nextBox.x + nextBox.width) / 2 -
+                    (paginationBox.x + paginationBox.width / 2)
+            ) <=
+                paginationBox.width * 0.2,
+            'Usage pagination controls are not centered'
+        )
+        assert(
+            optionsBox.x + optionsBox.width >=
+                paginationBox.x + paginationBox.width * 0.75,
+            'Usage page-size selector is not aligned to the right'
         )
         screenshots.panel = path.join(SCREENSHOTS_DIR, 'panel.png')
         await page.screenshot({ path: screenshots.panel, fullPage: true })
