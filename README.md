@@ -22,7 +22,7 @@ A usage-monitoring and balance-management dashboard for OpenWebUI. Install the b
 - Synchronize the authoritative OpenWebUI user list by stable user ID, including renames, deletions, and list order
 - Track used and remaining balances, adjust remaining balance, and reset used balance independently
 - Synchronize billing settings from base models to derived models and proxy current model icons from OpenWebUI
-- Test model availability, inspect usage records and charts, and import or export database backups
+- Inspect usage records and charts, and import or export database backups
 - Validate the Monitor UI and OpenWebUI API contract with PostgreSQL 18 and Chromium E2E tests
 
 ## Deployment
@@ -65,11 +65,11 @@ Vercel deployment requires a PostgreSQL provider exposed through `POSTGRES_URL` 
 | Variable            | Description                                                                         | Example                    |
 | ------------------- | ----------------------------------------------------------------------------------- | -------------------------- |
 | `OPENWEBUI_DOMAIN`  | OpenWebUI base URL reachable from Monitor                                           | `https://chat.example.com` |
-| `OPENWEBUI_API_KEY` | OpenWebUI admin API key or admin JWT used for model, icon, test, and user APIs      | `sk-xxxxxxxxxxxxxxxx`      |
+| `OPENWEBUI_API_KEY` | OpenWebUI admin API key or admin JWT used for model, icon, and user APIs            | `sk-xxxxxxxxxxxxxxxx`      |
 | `API_KEY`           | Shared secret used by the OpenWebUI function when calling Monitor inlet/outlet APIs | `generated-random-secret`  |
 | `ACCESS_TOKEN`      | Shared secret used to sign in to Monitor and authorize dashboard APIs               | `another-random-secret`    |
 
-OpenWebUI API keys must be enabled. If endpoint restrictions are enabled in OpenWebUI, the credential must be allowed to access the model, model-icon, chat-completions, and users endpoints. The credential must belong to an administrator because user synchronization calls `GET /api/v1/users/all`.
+OpenWebUI API keys must be enabled. If endpoint restrictions are enabled in OpenWebUI, the credential must be allowed to access the model, model-icon, and users endpoints. The credential must belong to an administrator because user synchronization calls `GET /api/v1/users/all`.
 
 ### Optional
 
@@ -146,10 +146,6 @@ Artifacts are written to the ignored `artifacts/e2e/` directory.
 ### Why are no users shown?
 
 Monitor synchronizes users from `GET /api/v1/users/all`. Confirm that `OPENWEBUI_DOMAIN` is reachable and that `OPENWEBUI_API_KEY` is an administrator credential allowed to call that endpoint. Users are matched by their OpenWebUI ID, so renaming a user does not create a duplicate and deleting a user removes it from the Monitor list on the next synchronization.
-
-### What is the difference between used and remaining balance?
-
-Used balance is the cumulative amount already consumed. Remaining balance is the amount available for future requests. Resetting used balance does not change remaining balance.
 
 ### Where are model icons stored?
 
